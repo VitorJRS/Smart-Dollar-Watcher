@@ -11,4 +11,6 @@ services:
         value: "America/Sao_Paulo"
       - key: PORT
         value: "8000"
+      - key: DATABASE_URL
+        value: "postgresql://encurtador_db_trdk_user:VlLWnraMKQyjRpxXeCu3109eeqdsCKRM@dpg-db7mvss9v7es73cklaqg-a/encurtador_db_trdk"
 

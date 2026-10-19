@@ -1,18 +1,29 @@
 import json
 import os
-from typing import Any, Optional, Dict
+from typing import Any, Optional
 
 _DB_INITIALIZED = False
+_DB_UNREACHABLE = False
+
+DEFAULT_RENDER_DB_URL = (
+    "postgresql://encurtador_db_trdk_user:"
+    "VlLWnraMKQyjRpxXeCu3109eeqdsCKRM@"
+    "dpg-db7mvss9v7es73cklaqg-a/encurtador_db_trdk"
+)
 
 
 def get_database_url() -> str:
     url = os.environ.get("DATABASE_URL", "").strip()
+    if not url and os.environ.get("RENDER"):
+        url = DEFAULT_RENDER_DB_URL
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
     return url
 
 
 def is_postgres_enabled() -> bool:
+    if _DB_UNREACHABLE:
+        return False
     return bool(get_database_url())
 
 
@@ -21,13 +32,17 @@ def _get_conn():
     url = get_database_url()
     if not url:
         return None
-    return psycopg.connect(url, autocommit=True, connect_timeout=8)
+    return psycopg.connect(url, autocommit=True, connect_timeout=5)
 
 
-def init_db():
-    global _DB_INITIALIZED
-    if _DB_INITIALIZED or not is_postgres_enabled():
-        return
+def init_db() -> bool:
+    global _DB_INITIALIZED, _DB_UNREACHABLE
+    if _DB_UNREACHABLE:
+        return False
+    if _DB_INITIALIZED:
+        return True
+    if not get_database_url():
+        return False
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
@@ -42,14 +57,16 @@ def init_db():
                 )
         _DB_INITIALIZED = True
         print("[Database] PostgreSQL conectado e tabela smart_dollar_store pronta!")
+        return True
     except Exception as e:
-        print(f"[Database] Aviso ao inicializar PostgreSQL: {e}")
+        _DB_UNREACHABLE = True
+        print(f"[Database] PostgreSQL indisponível neste ambiente ({e}). Usando JSON local.")
+        return False
 
 
 def db_get_json(key: str) -> Optional[Any]:
-    if not is_postgres_enabled():
+    if not is_postgres_enabled() or not init_db():
         return None
-    init_db()
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
@@ -66,9 +83,8 @@ def db_get_json(key: str) -> Optional[Any]:
 
 
 def db_set_json(key: str, data: Any) -> bool:
-    if not is_postgres_enabled():
+    if not is_postgres_enabled() or not init_db():
         return False
-    init_db()
     try:
         payload = json.dumps(data, ensure_ascii=False)
         with _get_conn() as conn:
@@ -90,9 +106,8 @@ def db_set_json(key: str, data: Any) -> bool:
 
 
 def db_delete_key(key: str) -> bool:
-    if not is_postgres_enabled():
+    if not is_postgres_enabled() or not init_db():
         return False
-    init_db()
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
@@ -101,3 +116,4 @@ def db_delete_key(key: str) -> bool:
     except Exception as e:
         print(f"[Database] Erro ao remover chave '{key}' no PostgreSQL: {e}")
         return False
+
