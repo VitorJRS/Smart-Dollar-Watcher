@@ -1,0 +1,9 @@
+fastapi>=0.115.0
+uvicorn>=0.32.0
+httpx>=0.28.0
+pandas>=2.2.0
+numpy>=2.0.0
+pydantic>=2.9.0
+apscheduler>=3.10.4
+qrcode>=8.0
+pillow>=10.4.0

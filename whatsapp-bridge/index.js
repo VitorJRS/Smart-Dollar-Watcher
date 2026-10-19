@@ -1,0 +1,454 @@
+const express = require("express");
+const pino = require("pino");
+const QRCode = require("qrcode");
+const qrcodeTerminal = require("qrcode-terminal");
+const fs = require("fs");
+const path = require("path");
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+} = require("@whiskeysockets/baileys");
+
+const PORT = process.env.WA_BRIDGE_PORT || 3001;
+const FASTAPI_PORT = process.env.PORT || 8000;
+const PYTHON_API_URL =
+  process.env.PYTHON_API_URL || `http://127.0.0.1:${FASTAPI_PORT}`;
+const AUTH_DIR = path.join(__dirname, "auth_info_baileys");
+const CREDS_FILE = path.join(AUTH_DIR, "creds.json");
+
+const app = express();
+app.use(express.json({ limit: "2mb" }));
+
+let sock = null;
+let connectionState = "connecting"; // connecting | qr_ready | connected | disconnected
+let currentQrDataUrl = null;
+let connectedUser = null;
+let isStarting = false;
+let reconnectTimer = null;
+
+const processedMsgIds = new Set();
+// Armazena as mensagens enviadas para que o getMessage reenvie o conteúdo real
+// caso o celular mostre "Aguardando mensagem. Essa ação pode levar alguns instantes."
+const sentMessagesStore = new Map();
+// Cache de metadados de grupos para envio instantâneo sem falha de criptografia
+const groupMetadataCache = new Map();
+
+function normalizeText(str) {
+  return (str || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function loadCachedUserFromDisk() {
+  try {
+    if (fs.existsSync(CREDS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(CREDS_FILE, "utf-8"));
+      if (raw && raw.me && raw.me.id) {
+        connectedUser = raw.me;
+        connectionState = "connected";
+        return true;
+      }
+    }
+  } catch (_) {}
+  return false;
+}
+
+loadCachedUserFromDisk();
+
+async function fetchAllGroups() {
+  if (!sock) return [];
+  try {
+    const groupsObj = await sock.groupFetchAllParticipating();
+    const list = Object.values(groupsObj || {});
+    for (const g of list) {
+      if (g && g.id) {
+        groupMetadataCache.set(g.id, g);
+      }
+    }
+    return list.map((g) => ({
+      id: g.id,
+      name: g.subject || "Grupo sem nome",
+      participants: (g.participants || []).length,
+    }));
+  } catch (err) {
+    console.error("[WhatsApp] Erro ao buscar grupos:", err.message);
+    return [];
+  }
+}
+
+async function resolveTargetJid(targetInput) {
+  const raw = (targetInput || "").trim();
+
+  // 1. Se já for um JID explícito de grupo ou contato
+  if (raw.endsWith("@g.us") || raw.endsWith("@s.whatsapp.net")) {
+    return raw;
+  }
+
+  // 2. Se tiver letras (ex: "bot de dolar"), procura nos grupos pelo nome!
+  const hasLetters = /[a-zA-ZÀ-ÿ]/.test(raw);
+  if (hasLetters || !raw) {
+    const searchName = normalizeText(raw || "bot de dolar");
+    const groups = await fetchAllGroups();
+
+    // Busca exata (ignorando acentos e maiúsculas)
+    let matched = groups.find((g) => normalizeText(g.name) === searchName);
+    // Busca parcial (contém o nome)
+    if (!matched) {
+      matched = groups.find((g) => normalizeText(g.name).includes(searchName));
+    }
+    if (matched) {
+      return matched.id;
+    }
+    if (hasLetters) {
+      throw new Error(
+        `Grupo "${raw}" não encontrado! Verifique se você criou um grupo com o nome "${raw}" no seu WhatsApp.`
+      );
+    }
+  }
+
+  // 3. Caso seja número de telefone ou vazio (fallback para o próprio número)
+  if (!raw) {
+    if (connectedUser && connectedUser.id) {
+      const bare = connectedUser.id.split(":")[0].split("@")[0];
+      return `${bare}@s.whatsapp.net`;
+    }
+    return null;
+  }
+
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return null;
+  const jid = `${digits}@s.whatsapp.net`;
+  if (sock) {
+    try {
+      const [res] = await sock.onWhatsApp(jid);
+      if (res && res.exists) return res.jid;
+    } catch (_) {}
+  }
+  return jid;
+}
+
+async function sendSafeMessage(targetJid, text) {
+  if (!sock) throw new Error("Socket do WhatsApp não inicializado.");
+
+  // Se for grupo, garante que os metadados dos participantes estão em cache antes de criptografar
+  if (targetJid.endsWith("@g.us") && !groupMetadataCache.has(targetJid)) {
+    try {
+      const meta = await sock.groupMetadata(targetJid);
+      if (meta) groupMetadataCache.set(targetJid, meta);
+    } catch (_) {}
+  }
+
+  const sent = await sock.sendMessage(targetJid, { text });
+  if (sent && sent.key && sent.key.id && sent.message) {
+    sentMessagesStore.set(sent.key.id, sent.message);
+    if (sentMessagesStore.size > 500) {
+      const oldestKey = sentMessagesStore.keys().next().value;
+      sentMessagesStore.delete(oldestKey);
+    }
+  }
+  return sent;
+}
+
+function extractMessageText(messageObj) {
+  if (!messageObj) return "";
+  const inner =
+    messageObj.ephemeralMessage?.message ||
+    messageObj.viewOnceMessage?.message ||
+    messageObj.documentWithCaptionMessage?.message ||
+    messageObj;
+
+  return (
+    inner.conversation ||
+    inner.extendedTextMessage?.text ||
+    inner.imageMessage?.caption ||
+    ""
+  );
+}
+
+async function resolveReplyJid(remoteJid, fromMe) {
+  // Se a mensagem veio de um grupo (@g.us), responde diretamente no próprio grupo!
+  if (remoteJid && remoteJid.endsWith("@g.us")) {
+    return remoteJid;
+  }
+  // Se veio do chat próprio (@lid), tenta achar primeiro o grupo "bot de dolar" ou usa @s.whatsapp.net
+  if (fromMe && remoteJid && remoteJid.endsWith("@lid")) {
+    try {
+      const jid = await resolveTargetJid("");
+      if (jid) return jid;
+    } catch (_) {}
+  }
+  return remoteJid;
+}
+
+async function startWhatsApp() {
+  if (isStarting) return;
+  isStarting = true;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+
+    if (state.creds && state.creds.me && state.creds.me.id) {
+      connectedUser = state.creds.me;
+      connectionState = "connected";
+      currentQrDataUrl = null;
+    }
+
+    let version = [2, 3000, 1015901307];
+    try {
+      const latest = await fetchLatestBaileysVersion();
+      if (latest && latest.version) version = latest.version;
+    } catch (_) {}
+
+    if (sock) {
+      try {
+        sock.ev.removeAllListeners();
+        sock.ws?.close();
+      } catch (_) {}
+    }
+
+    sock = makeWASocket({
+      version,
+      logger: pino({ level: "silent" }),
+      printQRInTerminal: false,
+      auth: state,
+      browser: ["Smart Dollar Bot", "Chrome", "120.0.0"],
+      syncFullHistory: false,
+      keepAliveIntervalMs: 25000,
+      retryRequestDelayMs: 250,
+      maxMsgRetryCount: 10,
+      cachedGroupMetadata: async (jid) => groupMetadataCache.get(jid),
+      // Retorna a mensagem real armazenada para destravar "Aguardando mensagem..." no celular!
+      getMessage: async (key) => {
+        if (key && key.id && sentMessagesStore.has(key.id)) {
+          return sentMessagesStore.get(key.id);
+        }
+        return { conversation: "💵 Smart Dollar Bot" };
+      },
+    });
+
+    sock.ev.on("creds.update", async () => {
+      await saveCreds();
+      if (sock?.user?.id) {
+        connectedUser = sock.user;
+      }
+    });
+
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        connectionState = "qr_ready";
+        console.log("\n=======================================================");
+        console.log("📱 ESCANEIE O QR CODE ABAIXO NO SEU WHATSAPP");
+        console.log("   (Ou abra http://localhost:8000 no navegador)");
+        console.log("=======================================================\n");
+        qrcodeTerminal.generate(qr, { small: true });
+        try {
+          currentQrDataUrl = await QRCode.toDataURL(qr, {
+            margin: 2,
+            width: 520,
+          });
+        } catch (err) {
+          console.error("Erro ao gerar QR DataURL:", err.message);
+        }
+      }
+
+      if (connection === "close") {
+        const statusCode =
+          lastDisconnect?.error?.output?.statusCode ||
+          lastDisconnect?.error?.statusCode;
+        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+
+        console.log(
+          `[WhatsApp] Conexão oscilou (código: ${statusCode}). Reconectando automaticamente...`
+        );
+
+        if (!isLoggedOut) {
+          if (!loadCachedUserFromDisk()) {
+            connectionState = "connecting";
+          }
+          if (!reconnectTimer) {
+            reconnectTimer = setTimeout(() => {
+              isStarting = false;
+              startWhatsApp();
+            }, 3000);
+          }
+        } else {
+          connectionState = "disconnected";
+          connectedUser = null;
+          currentQrDataUrl = null;
+          if (fs.existsSync(AUTH_DIR)) {
+            fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+          }
+          reconnectTimer = setTimeout(() => {
+            isStarting = false;
+            startWhatsApp();
+          }, 2000);
+        }
+      } else if (connection === "open") {
+        connectionState = "connected";
+        currentQrDataUrl = null;
+        connectedUser = sock.user || connectedUser || {};
+        const bareNumber = (connectedUser.id || "").split(":")[0].split("@")[0];
+        console.log("\n=======================================================");
+        console.log(`✅ WHATSAPP CONECTADO E ATIVO! Número: +${bareNumber}`);
+        console.log("💡 Dica: Crie um grupo chamado 'bot de dolar' e mande !dolar nele!");
+        console.log("=======================================================\n");
+        // Pré-carrega os grupos em cache
+        setTimeout(fetchAllGroups, 1500);
+      }
+    });
+
+    sock.ev.on("messages.upsert", async ({ messages, type }) => {
+      if (type !== "notify" && type !== "append") return;
+
+      for (const msg of messages) {
+        if (!msg.message || !msg.key) continue;
+
+        const msgId = msg.key.id;
+        if (msgId && processedMsgIds.has(msgId)) continue;
+        // Ignora mensagens que o próprio bot acabou de enviar
+        if (msgId && sentMessagesStore.has(msgId)) continue;
+
+        const msgTs = Number(msg.messageTimestamp || 0);
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (msgTs > 0 && nowSec - msgTs > 45) continue;
+
+        const text = extractMessageText(msg.message);
+        const trimmed = text.trim();
+        if (!trimmed.startsWith("!")) continue;
+
+        const remoteJid = msg.key.remoteJid;
+        if (!remoteJid || remoteJid === "status@broadcast") continue;
+
+        if (msgId) {
+          processedMsgIds.add(msgId);
+          if (processedMsgIds.size > 500) {
+            const first = processedMsgIds.values().next().value;
+            processedMsgIds.delete(first);
+          }
+        }
+
+        console.log(`[WhatsApp Comando Recebido] "${trimmed}" de ${remoteJid}`);
+        try {
+          const resp = await fetch(`${PYTHON_API_URL}/api/whatsapp/command`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              command: trimmed,
+              sender: remoteJid,
+            }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.reply) {
+              const targetJid = await resolveReplyJid(remoteJid, Boolean(msg.key.fromMe));
+              await sendSafeMessage(targetJid, data.reply);
+              console.log(`[WhatsApp Resposta Enviada] -> ${targetJid}`);
+            }
+          }
+        } catch (err) {
+          console.error("[WhatsApp] Erro ao processar comando:", err.message);
+        }
+      }
+    });
+  } catch (err) {
+    console.error("[WhatsApp] Erro ao iniciar Baileys:", err.message);
+    if (!loadCachedUserFromDisk()) {
+      connectionState = "disconnected";
+    }
+    reconnectTimer = setTimeout(() => {
+      isStarting = false;
+      startWhatsApp();
+    }, 5000);
+  } finally {
+    isStarting = false;
+  }
+}
+
+app.get("/status", (req, res) => {
+  if (!connectedUser) {
+    loadCachedUserFromDisk();
+  }
+  const bareNumber = connectedUser?.id
+    ? connectedUser.id.split(":")[0].split("@")[0]
+    : null;
+
+  const effectiveStatus =
+    bareNumber && connectionState !== "qr_ready" ? "connected" : connectionState;
+
+  res.json({
+    status: effectiveStatus,
+    qr_data_url: effectiveStatus === "connected" ? null : currentQrDataUrl,
+    user_phone: bareNumber,
+    user_name: connectedUser?.name || null,
+  });
+});
+
+app.get("/groups", async (req, res) => {
+  const groups = await fetchAllGroups();
+  res.json({ ok: true, groups });
+});
+
+app.post("/send", async (req, res) => {
+  const { phone, message } = req.body || {};
+  if (!sock) {
+    return res.status(400).json({
+      ok: false,
+      error: "WhatsApp ainda não está pronto. Aguarde alguns segundos.",
+    });
+  }
+
+  try {
+    const targetJid = await resolveTargetJid(phone);
+    if (!targetJid) {
+      return res.status(400).json({
+        ok: false,
+        error: "Destino inválido e nenhum grupo ou número conectado encontrado.",
+      });
+    }
+
+    await sendSafeMessage(targetJid, message);
+    return res.json({ ok: true, target: targetJid });
+  } catch (err) {
+    console.error("[WhatsApp] Falha ao enviar mensagem:", err.message);
+    return res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/logout", async (req, res) => {
+  try {
+    if (sock) {
+      await sock.logout();
+    }
+  } catch (_) {}
+  if (fs.existsSync(AUTH_DIR)) {
+    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+  }
+  connectionState = "connecting";
+  currentQrDataUrl = null;
+  connectedUser = null;
+  isStarting = false;
+  setTimeout(startWhatsApp, 1000);
+  res.json({ ok: true });
+});
+
+const server = app.listen(PORT, "127.0.0.1", () => {
+  console.log(`🚀 Ponte WhatsApp Web (Baileys) rodando em http://127.0.0.1:${PORT}`);
+  startWhatsApp();
+});
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.log(`[WhatsApp Bridge] Porta ${PORT} já está em uso por outra instância ativa. Encerrando duplicata.`);
+    process.exit(0);
+  }
+});

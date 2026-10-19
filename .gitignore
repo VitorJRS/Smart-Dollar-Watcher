@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+whatsapp-bridge/node_modules/
+whatsapp-bridge/auth_info_baileys/
+data/
+.env

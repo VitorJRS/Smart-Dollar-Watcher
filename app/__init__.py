@@ -1,0 +1,1 @@
+# Smart Dollar Watcher package

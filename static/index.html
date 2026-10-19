@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Dollar Watcher — Radar Quantitativo & Alerta no Zap</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo-badge">US$</div>
+      <div>
+        <h1>Smart Dollar Watcher</h1>
+        <p>Motor Quantitativo 4 Pilares + Bot WhatsApp em Tempo Real</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="lastUpdateBadge" class="badge-muted">Atualizando...</span>
+      <button id="btnRefresh" class="btn btn-secondary" title="Forçar atualização das cotações">
+        🔄 Atualizar Agora
+      </button>
+      <button id="btnSendZapNow" class="btn btn-whatsapp">
+        📲 Enviar Raio-X no Zap Agora
+      </button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- LINHA 1: HERO COTAÇÃO + TERMÔMETRO SCORE + DETECTOR ANTI-FACA CAINDO -->
+    <section class="grid-hero">
+      <!-- Card Cotação Spot -->
+      <div class="card spot-card">
+        <div class="card-header">
+          <span class="card-label">DÓLAR COMERCIAL (SPOT)</span>
+          <span id="spotSource" class="source-tag">--</span>
+        </div>
+        <div class="spot-price-row">
+          <div class="spot-price" id="spotPrice">R$ --</div>
+          <div class="spot-change" id="spotChange">--%</div>
+        </div>
+        <div class="spot-subgrid">
+          <div class="mini-stat">
+            <span>Mínima Hoje</span>
+            <strong id="spotLow">R$ --</strong>
+          </div>
+          <div class="mini-stat">
+            <span>Máxima Hoje</span>
+            <strong id="spotHigh">R$ --</strong>
+          </div>
+          <div class="mini-stat">
+            <span>Mínima 30d</span>
+            <strong id="statMin30">R$ --</strong>
+          </div>
+          <div class="mini-stat">
+            <span>Média 30d</span>
+            <strong id="statMean30">R$ --</strong>
+          </div>
+        </div>
+
+        <div class="reasons-box">
+          <h4>Por que comprar (ou esperar) agora?</h4>
+          <ul id="reasonsList" class="reasons-list"></ul>
+        </div>
+      </div>
+
+      <!-- Card Termômetro Score -->
+      <div class="card score-card">
+        <div class="card-header">
+          <span class="card-label">SCORE QUANTITATIVO DE COMPRA</span>
+          <span id="alertThresholdTag" class="source-tag">Alerta >= 72 pts</span>
+        </div>
+        <div class="gauge-wrapper">
+          <div class="score-circle" id="scoreCircle">
+            <span class="score-num" id="scoreTotal">--</span>
+            <span class="score-max">/ 100</span>
+          </div>
+          <div class="verdict-banner" id="verdictBanner">Calculando...</div>
+        </div>
+
+        <div class="pillars-list">
+          <div class="pillar-item">
+            <div class="pillar-top">
+              <span>📐 Estatística Histórica (Percentil + Z-Score)</span>
+              <strong id="pStatText">0 / 35</strong>
+            </div>
+            <div class="progress-bar"><div id="pStatBar" class="progress-fill"></div></div>
+          </div>
+
+          <div class="pillar-item">
+            <div class="pillar-top">
+              <span>📈 Indicadores Técnicos (RSI + Bollinger + Médias)</span>
+              <strong id="pTechText">0 / 35</strong>
+            </div>
+            <div class="progress-bar"><div id="pTechBar" class="progress-fill"></div></div>
+          </div>
+
+          <div class="pillar-item">
+            <div class="pillar-top">
+              <span>🛡️ Timing & Anti-Faca Caindo (MACD + ATR)</span>
+              <strong id="pTrendText">0 / 20</strong>
+            </div>
+            <div class="progress-bar"><div id="pTrendBar" class="progress-fill"></div></div>
+          </div>
+
+          <div class="pillar-item">
+            <div class="pillar-top">
+              <span>💰 Economia Efetiva no Bolso (VET)</span>
+              <strong id="pEconText">0 / 10</strong>
+            </div>
+            <div class="progress-bar"><div id="pEconBar" class="progress-fill"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card Filtro Anti-Faca Caindo + Conexão WhatsApp -->
+      <div class="card timing-wa-card">
+        <div class="timing-box" id="timingBox">
+          <div class="card-header">
+            <span class="card-label">FILTRO ANTI-FACA CAINDO & ESTRATÉGIA DCA</span>
+          </div>
+          <div class="timing-status" id="timingStatus">--</div>
+          <p class="timing-advice" id="timingAdvice">--</p>
+          <div class="dca-pills">
+            <div class="dca-pill">
+              <span>1º Lote (Agora)</span>
+              <strong id="dcaPrice1">R$ --</strong>
+            </div>
+            <div class="dca-pill">
+              <span>2º Lote (Recuo ATR)</span>
+              <strong id="dcaPrice2">R$ --</strong>
+            </div>
+            <div class="dca-pill">
+              <span>Suporte 30d</span>
+              <strong id="dcaSupport">R$ --</strong>
+            </div>
+          </div>
+        </div>
+
+        <hr class="divider" />
+
+        <!-- Status do WhatsApp -->
+        <div class="wa-box">
+          <div class="card-header">
+            <span class="card-label">CONEXÃO WHATSAPP WEB (BAILEYS)</span>
+            <span id="waStatusBadge" class="wa-badge">Verificando...</span>
+          </div>
+          <div id="waConnectedView" class="wa-connected hidden">
+            <p>✅ Conectado ao WhatsApp <strong id="waUserPhone"></strong></p>
+            <small>Envie <code>!dolar</code>, <code>!simular 1000</code> ou <code>!meta 5.45</code> em qualquer conversa para interagir com o bot!</small>
+            <button id="btnWaLogout" class="btn btn-danger-outline btn-sm">Desconectar / Trocar Número</button>
+          </div>
+          <div id="waQrView" class="wa-qr-view hidden">
+            <img id="waQrImg" src="" alt="QR Code WhatsApp" title="Clique para ampliar o QR Code" />
+            <div class="wa-qr-info">
+              <strong>Escaneie com seu WhatsApp</strong>
+              <p>Abra o WhatsApp no celular ➔ Aparelhos Conectados ➔ Conectar Aparelho.</p>
+              <button type="button" id="btnOpenQrModal" class="btn btn-primary btn-sm" style="margin-top:8px;">
+                🔍 Ampliar QR Code (Pop-up)
+              </button>
+            </div>
+          </div>
+          <div id="waLoadingView" class="wa-loading">
+            Iniciando ponte do WhatsApp Web... aguarde alguns segundos.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LINHA 2: INDICADORES DETALHADOS + SIMULADOR REAL (VET) -->
+    <section class="grid-two">
+      <!-- Raio-X dos Indicadores -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-label">RAIO-X TÉCNICO & ESTATÍSTICO (MÉTODO COMPLETO)</span>
+        </div>
+        <div class="indicators-grid">
+          <div class="ind-box">
+            <span class="ind-title">RSI (14 Períodos)</span>
+            <strong class="ind-val" id="indRsi">--</strong>
+            <small class="ind-desc" id="indRsiDesc">&lt; 35 = Sobrevenda (Compra)</small>
+          </div>
+          <div class="ind-box">
+            <span class="ind-title">Bandas de Bollinger (%B)</span>
+            <strong class="ind-val" id="indBbPct">--</strong>
+            <small class="ind-desc" id="indBbRange">Inf: -- | Sup: --</small>
+          </div>
+          <div class="ind-box">
+            <span class="ind-title">Percentil 30 Dias</span>
+            <strong class="ind-val" id="indCheap30">--</strong>
+            <small class="ind-desc">Dias mais caros que hoje (30d)</small>
+          </div>
+          <div class="ind-box">
+            <span class="ind-title">Percentil 90 Dias</span>
+            <strong class="ind-val" id="indCheap90">--</strong>
+            <small class="ind-desc">Dias mais caros que hoje (90d)</small>
+          </div>
+          <div class="ind-box">
+            <span class="ind-title">Z-Score (30d / 90d)</span>
+            <strong class="ind-val" id="indZscore">--</strong>
+            <small class="ind-desc">Desvios-padrão da média</small>
+          </div>
+          <div class="ind-box">
+            <span class="ind-title">Médias SMA 20 / SMA 50</span>
+            <strong class="ind-val" id="indSmaDiff">--</strong>
+            <small class="ind-desc" id="indSmaVals">SMA20: -- | SMA50: --</small>
+          </div>
+          <div class="ind-box">
+            <span class="ind-title">MACD Histograma</span>
+            <strong class="ind-val" id="indMacd">--</strong>
+            <small class="ind-desc" id="indMacdSlope">Inércia do movimento</small>
+          </div>
+          <div class="ind-box">
+            <span class="ind-title">Volatilidade ATR (14)</span>
+            <strong class="ind-val" id="indAtr">--</strong>
+            <small class="ind-desc">Oscilação média diária</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Simulador de Custo Efetivo Total (VET) -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-label">SIMULADOR REAL DE CUSTO EFETIVO (IOF + SPREAD)</span>
+          <div class="sim-input-group">
+            <label for="simUsdInput">Valor US$:</label>
+            <input type="number" id="simUsdInput" value="1000" min="10" step="100" />
+          </div>
+        </div>
+        <table class="vet-table">
+          <thead>
+            <tr>
+              <th>Modalidade</th>
+              <th>Spread + IOF</th>
+              <th>VET (R$/US$)</th>
+              <th>Total em R$</th>
+            </tr>
+          </thead>
+          <tbody id="vetTableBody"></tbody>
+        </table>
+        <div class="savings-Callout" id="savingsCallout">
+          Calculando economia real...
+        </div>
+      </div>
+    </section>
+
+    <!-- LINHA 3: GRÁFICO 90 DIAS COM BOLLINGER E MÉDIAS -->
+    <section class="card chart-card">
+      <div class="card-header">
+        <span class="card-label">HISTÓRICO DE 90 DIAS + BANDAS DE BOLLINGER (20,2) + MÉDIAS MÓVEIS</span>
+      </div>
+      <div class="chart-container">
+        <canvas id="priceChart"></canvas>
+      </div>
+    </section>
+
+    <!-- LINHA 4: CONFIGURAÇÕES DO ROBÔ + HISTÓRICO DE ALERTAS -->
+    <section class="grid-two">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-label">⚙️ CONFIGURAÇÃO DOS ALERTAS AUTOMÁTICOS NO ZAP</span>
+        </div>
+        <form id="configForm" class="config-form">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Nome do Grupo ou Número de Destino</label>
+              <div style="display:flex;gap:6px;">
+                <input type="text" id="cfgPhone" value="bot de dolar" placeholder="Ex: bot de dolar ou 5511999999999" style="flex:1;" />
+                <button type="button" id="btnLoadGroups" class="btn btn-secondary btn-sm" title="Listar meus grupos do WhatsApp">📋 Grupos</button>
+              </div>
+              <select id="groupSelect" class="hidden" style="margin-top:6px;background:#0f1523;border:1px solid #334155;color:#fff;padding:7px;border-radius:6px;font-size:0.82rem;"></select>
+              <small>Digite o nome do seu grupo (ex: <strong>bot de dolar</strong>) ou envie <code>!aqui</code> dentro do grupo!</small>
+            </div>
+            <div class="form-group">
+              <label>Score Mínimo p/ Alerta (0 a 100)</label>
+              <input type="number" id="cfgMinScore" min="30" max="98" value="72" />
+              <small>Recomendado: 70 a 78 (só avisa quando realmente compensa).</small>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Meta Opcional de Preço Fixo (R$)</label>
+              <input type="number" id="cfgTargetPrice" step="0.01" placeholder="Ex: 5.45 (opcional)" />
+              <small>Se preenchido, avisa na hora caso o dólar caia abaixo desse valor.</small>
+            </div>
+            <div class="form-group">
+              <label>Valor Base da Simulação (US$)</label>
+              <input type="number" id="cfgSimUsd" step="50" value="1000" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Intervalo de Checagem (minutos)</label>
+              <input type="number" id="cfgInterval" min="1" max="120" value="5" />
+            </div>
+            <div class="form-group">
+              <label>Cooldown Anti-Spam (horas)</label>
+              <input type="number" id="cfgCooldown" step="0.5" min="0.5" max="24" value="4" />
+              <small>Pausa entre alertas repetidos (exceto se cair mais R$ 0,03).</small>
+            </div>
+          </div>
+
+          <div class="form-row checkboxes-row">
+            <label class="checkbox-label">
+              <input type="checkbox" id="cfgAutoEnabled" checked />
+              Monitoramento Automático Ativo
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="cfgMarketHours" />
+              Apenas em horário comercial (Seg-Sex, 08h às 19h)
+            </label>
+          </div>
+
+          <button type="submit" class="btn btn-primary">💾 Salvar Configurações</button>
+          <span id="saveFeedback" class="save-feedback"></span>
+        </form>
+      </div>
+
+      <!-- Histórico de Alertas Disparados -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-label">🔔 ÚLTIMOS ALERTAS ENVIADOS NO WHATSAPP</span>
+        </div>
+        <div id="alertsHistoryBox" class="history-list">
+          <p class="muted-empty">Nenhum alerta disparado ainda.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL POP-UP QR CODE WHATSAPP GRANDE -->
+  <div id="qrModal" class="qr-modal-backdrop hidden">
+    <div class="qr-modal-card">
+      <div class="qr-modal-header">
+        <div>
+          <h3>📱 Conectar WhatsApp Web</h3>
+          <p>Escaneie o QR Code abaixo pelo seu celular para ativar os alertas</p>
+        </div>
+        <button type="button" id="btnCloseQrModal" class="qr-modal-close" title="Fechar">&times;</button>
+      </div>
+
+      <div class="qr-modal-body">
+        <div class="qr-big-frame">
+          <img id="waQrModalImg" src="" alt="QR Code Ampliado do WhatsApp" />
+        </div>
+        <ol class="qr-steps">
+          <li>Abra o <strong>WhatsApp</strong> no seu celular</li>
+          <li>Toque em <strong>Mais opções (⋮)</strong> ou <strong>Configurações (⚙️)</strong> e selecione <strong>Aparelhos conectados</strong></li>
+          <li>Toque em <strong>Conectar um aparelho</strong> e aponte a câmera para este QR Code</li>
+        </ol>
+      </div>
+
+      <div class="qr-modal-footer">
+        <button type="button" id="btnRegenerateQr" class="btn btn-secondary">🔄 Gerar Novo QR Code</button>
+        <button type="button" id="btnCloseQrModalFooter" class="btn btn-primary">Fechar Janela</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
