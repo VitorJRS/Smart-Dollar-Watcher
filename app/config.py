@@ -1,16 +1,19 @@
 import json
-import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
+from app.db import is_postgres_enabled, db_get_json, db_set_json, db_delete_key
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = BASE_DIR / "data" / "config.json"
 HISTORY_FILE = BASE_DIR / "data" / "alerts_history.json"
+WA_AUTH_DIR = BASE_DIR / "whatsapp-bridge" / "auth_info_baileys"
+
+_CONFIG_MEM_CACHE: Optional["AppConfig"] = None
+_HISTORY_MEM_CACHE: Optional[List[dict]] = None
 
 
 class SpreadConfig(BaseModel):
-    # Padrão idêntico ao print (Encargos/IOF 3,5% + Taxa de conversão 2,0%)
     global_account_spread_pct: float = 2.00   # Taxa de conversão padrão Conta Global (2,0%)
     global_account_iof_pct: float = 3.50      # Encargos / IOF vigente (3,5%)
     wise_spread_pct: float = 1.22             # Tarifa média Wise PIX (~1,22%)
@@ -24,7 +27,7 @@ class SpreadConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    target_phone: str = "bot de dolar"        # Nome do grupo (ex: "bot de dolar") ou telefone (ex: 5511999999999)
+    target_phone: str = "bot de dolar"        # Nome do grupo (ex: "bot de dolar") ou telefone
     min_score_alert: int = 72                 # Score mínimo (0 a 100) para disparar alerta automático
     target_price_brl: Optional[float] = None  # Alerta opcional por preço-alvo direto (ex: 5.00)
     simulation_amount_usd: float = 1000.0     # Valor base para simular
@@ -39,55 +42,159 @@ def ensure_data_dir():
     (BASE_DIR / "data").mkdir(parents=True, exist_ok=True)
 
 
-def load_config() -> AppConfig:
+def _normalize_config_dict(data: Dict[str, Any]) -> tuple[AppConfig, bool]:
+    changed = False
+    spreads_data = data.get("spreads", {})
+    if spreads_data.get("global_account_iof_pct") == 1.1:
+        data["spreads"] = SpreadConfig().model_dump()
+        changed = True
+    if not data.get("target_phone"):
+        data["target_phone"] = "bot de dolar"
+        changed = True
+    return AppConfig(**data), changed
+
+
+def load_config(force_db: bool = False) -> AppConfig:
+    global _CONFIG_MEM_CACHE
     ensure_data_dir()
+
+    if _CONFIG_MEM_CACHE is not None and not force_db:
+        return _CONFIG_MEM_CACHE
+
+    # 1. Tenta carregar do banco PostgreSQL (Render) se configurado
+    if is_postgres_enabled():
+        db_data = db_get_json("app_config")
+        if isinstance(db_data, dict):
+            try:
+                cfg, changed = _normalize_config_dict(db_data)
+                _CONFIG_MEM_CACHE = cfg
+                CONFIG_FILE.write_text(
+                    json.dumps(cfg.model_dump(), indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                if changed:
+                    save_config(cfg)
+                return cfg
+            except Exception:
+                pass
+
+    # 2. Fallback para arquivo local data/config.json
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            changed = False
-            spreads_data = data.get("spreads", {})
-            if spreads_data.get("global_account_iof_pct") == 1.1:
-                data["spreads"] = SpreadConfig().model_dump()
-                changed = True
-            if not data.get("target_phone"):
-                data["target_phone"] = "bot de dolar"
-                changed = True
-            cfg = AppConfig(**data)
-            if changed:
+            cfg, changed = _normalize_config_dict(data)
+            _CONFIG_MEM_CACHE = cfg
+            if changed or is_postgres_enabled():
                 save_config(cfg)
             return cfg
         except Exception:
             pass
+
     cfg = AppConfig()
     save_config(cfg)
     return cfg
 
 
 def save_config(cfg: AppConfig) -> AppConfig:
+    global _CONFIG_MEM_CACHE
     ensure_data_dir()
+    _CONFIG_MEM_CACHE = cfg
+    dump_dict = cfg.model_dump()
+
     CONFIG_FILE.write_text(
-        json.dumps(cfg.model_dump(), indent=2, ensure_ascii=False),
+        json.dumps(dump_dict, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    if is_postgres_enabled():
+        db_set_json("app_config", dump_dict)
     return cfg
 
 
 def load_alerts_history() -> List[dict]:
+    global _HISTORY_MEM_CACHE
     ensure_data_dir()
+
+    if _HISTORY_MEM_CACHE is not None:
+        return _HISTORY_MEM_CACHE
+
+    if is_postgres_enabled():
+        db_hist = db_get_json("alerts_history")
+        if isinstance(db_hist, list):
+            _HISTORY_MEM_CACHE = db_hist
+            HISTORY_FILE.write_text(
+                json.dumps(db_hist, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            return db_hist
+
     if HISTORY_FILE.exists():
         try:
-            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            hist = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            _HISTORY_MEM_CACHE = hist
+            return hist
         except Exception:
             return []
     return []
 
 
 def append_alert_history(entry: dict):
+    global _HISTORY_MEM_CACHE
     ensure_data_dir()
-    history = load_alerts_history()
+    history = list(load_alerts_history())
     history.insert(0, entry)
-    history = history[:100]  # mantém os últimos 100 alertas
+    history = history[:100]
+    _HISTORY_MEM_CACHE = history
+
     HISTORY_FILE.write_text(
         json.dumps(history, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    if is_postgres_enabled():
+        db_set_json("alerts_history", history)
+
+
+def backup_wa_auth_to_db() -> bool:
+    """
+    Salva os arquivos de sessão do WhatsApp (auth_info_baileys) no PostgreSQL do Render,
+    para que o login do WhatsApp não seja perdido quando o container reiniciar!
+    """
+    if not is_postgres_enabled() or not WA_AUTH_DIR.exists():
+        return False
+    files_map: Dict[str, str] = {}
+    try:
+        for file_path in WA_AUTH_DIR.glob("*.json"):
+            if file_path.is_file():
+                files_map[file_path.name] = file_path.read_text(encoding="utf-8")
+        if "creds.json" in files_map:
+            return db_set_json("wa_auth_files", files_map)
+    except Exception as e:
+        print(f"[Database] Aviso ao fazer backup da sessão WhatsApp: {e}")
+    return False
+
+
+def restore_wa_auth_from_db() -> bool:
+    """
+    Restaura os arquivos de sessão do WhatsApp a partir do PostgreSQL antes de iniciar a ponte Node.
+    """
+    if not is_postgres_enabled():
+        return False
+    creds_file = WA_AUTH_DIR / "creds.json"
+    if creds_file.exists():
+        return True
+    try:
+        files_map = db_get_json("wa_auth_files")
+        if isinstance(files_map, dict) and "creds.json" in files_map:
+            WA_AUTH_DIR.mkdir(parents=True, exist_ok=True)
+            for fname, content in files_map.items():
+                if isinstance(fname, str) and isinstance(content, str) and fname.endswith(".json"):
+                    (WA_AUTH_DIR / fname).write_text(content, encoding="utf-8")
+            print(f"[Database] Sessão do WhatsApp restaurada do PostgreSQL ({len(files_map)} arquivos)!")
+            return True
+    except Exception as e:
+        print(f"[Database] Aviso ao restaurar sessão WhatsApp: {e}")
+    return False
+
+
+def clear_wa_auth_from_db():
+    if is_postgres_enabled():
+        db_delete_key("wa_auth_files")

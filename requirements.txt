@@ -7,3 +7,4 @@ pydantic>=2.9.0
 apscheduler>=3.10.4
 qrcode>=8.0
 pillow>=10.4.0
+psycopg[binary]>=3.2.0

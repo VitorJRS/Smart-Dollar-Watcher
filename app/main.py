@@ -25,8 +25,12 @@ from app.config import (
     save_config,
     load_alerts_history,
     append_alert_history,
+    backup_wa_auth_to_db,
+    restore_wa_auth_from_db,
+    clear_wa_auth_from_db,
     BASE_DIR,
 )
+from app.db import is_postgres_enabled
 from app.market_data import fetch_spot_quote, fetch_historical_ohlc
 from app.analyzer import analyze_dollar
 from app.whatsapp_formatter import (
@@ -46,6 +50,7 @@ from app.whatsapp_formatter import (
 WA_BRIDGE_URL = "http://127.0.0.1:3001"
 _bridge_process: Optional[subprocess.Popen] = None
 _bridge_last_spawn_ts: float = 0.0
+_last_wa_db_backup_ts: float = 0.0
 _monitor_task: Optional[asyncio.Task] = None
 
 # Estado de controle anti-spam de alertas automáticos
@@ -78,6 +83,8 @@ async def ensure_wa_bridge_started():
     index_js = bridge_dir / "index.js"
     if index_js.exists() and (_bridge_process is None or _bridge_process.poll() is not None):
         try:
+            # Restaura a sessão do WhatsApp salva no PostgreSQL antes de iniciar o Node Bridge
+            restore_wa_auth_from_db()
             _bridge_last_spawn_ts = now
             _bridge_process = subprocess.Popen(
                 ["node", "index.js"],
@@ -229,6 +236,7 @@ def _read_disk_wa_creds() -> Optional[Dict[str, Any]]:
 
 
 async def get_wa_status_internal() -> Dict[str, Any]:
+    global _last_wa_db_backup_ts
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             r = await client.get(f"{WA_BRIDGE_URL}/status")
@@ -238,6 +246,10 @@ async def get_wa_status_internal() -> Dict[str, Any]:
                     _WA_STATUS_CACHE["status"] = "connected"
                     _WA_STATUS_CACHE["user_phone"] = data.get("user_phone")
                     _WA_STATUS_CACHE["user_name"] = data.get("user_name")
+                    now = time.time()
+                    if now - _last_wa_db_backup_ts > 180.0:
+                        _last_wa_db_backup_ts = now
+                        backup_wa_auth_to_db()
                     return data
                 if data.get("status") == "qr_ready":
                     _WA_STATUS_CACHE["status"] = "qr_ready"
@@ -287,8 +299,17 @@ async def health_check():
     await ensure_wa_bridge_started()
     return {
         "status": "ok",
+        "database": "PostgreSQL" if is_postgres_enabled() else "Local JSON",
         "last_check_ts": _ALERT_STATE.get("last_check_ts"),
     }
+
+
+@app.post("/api/internal/wa-backup")
+async def api_internal_wa_backup():
+    global _last_wa_db_backup_ts
+    _last_wa_db_backup_ts = time.time()
+    backup_wa_auth_to_db()
+    return {"ok": True}
 
 
 @app.get("/api/analysis")
@@ -305,6 +326,7 @@ async def api_get_analysis(force: bool = False, usd_amount: Optional[float] = No
         "analysis": analysis,
         "config": cfg.model_dump(),
         "history": load_alerts_history()[:15],
+        "database": "PostgreSQL (Render)" if is_postgres_enabled() else "Local JSON",
         "last_check_ts": _ALERT_STATE["last_check_ts"],
     }
 
@@ -343,6 +365,7 @@ async def api_wa_logout():
     _WA_STATUS_CACHE["status"] = None
     _WA_STATUS_CACHE["user_phone"] = None
     _WA_STATUS_CACHE["user_name"] = None
+    clear_wa_auth_from_db()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.post(f"{WA_BRIDGE_URL}/logout")

@@ -234,11 +234,22 @@ async function startWhatsApp() {
       },
     });
 
+    let backupTimer = null;
+    function schedulePythonWaBackup() {
+      if (backupTimer) clearTimeout(backupTimer);
+      backupTimer = setTimeout(() => {
+        fetch(`${PYTHON_API_URL}/api/internal/wa-backup`, {
+          method: "POST",
+        }).catch(() => {});
+      }, 2500);
+    }
+
     sock.ev.on("creds.update", async () => {
       await saveCreds();
       if (sock?.user?.id) {
         connectedUser = sock.user;
       }
+      schedulePythonWaBackup();
     });
 
     sock.ev.on("connection.update", async (update) => {
@@ -302,6 +313,7 @@ async function startWhatsApp() {
         console.log(`✅ WHATSAPP CONECTADO E ATIVO! Número: +${bareNumber}`);
         console.log("💡 Dica: Crie um grupo chamado 'bot de dolar' e mande !dolar nele!");
         console.log("=======================================================\n");
+        schedulePythonWaBackup();
         // Pré-carrega os grupos em cache
         setTimeout(fetchAllGroups, 1500);
       }
