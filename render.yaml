@@ -11,13 +11,4 @@ services:
         value: "America/Sao_Paulo"
       - key: PORT
         value: "8000"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: smart-dollar-db
-          property: connectionString
 
-databases:
-  - name: smart-dollar-db
-    databaseName: smart_dollar
-    user: smart_dollar_user
-    plan: free
