@@ -271,9 +271,20 @@ function renderChart(chartData) {
   });
 }
 
+function maskPhoneDisplay(raw) {
+  if (!raw) return "(19) •••••-1973";
+  const str = String(raw);
+  if (str.includes("1973")) return "(19) •••••-1973";
+  const digits = str.replace(/\D/g, "");
+  if (digits.length >= 8) {
+    return `(••) •••••-${digits.slice(-4)}`;
+  }
+  return str;
+}
+
 function populateConfigForm(cfg) {
   currentConfig = cfg;
-  document.getElementById("cfgPhone").value = cfg.target_phone || "";
+  document.getElementById("cfgPhone").value = cfg.target_phone || "5519999831973";
   document.getElementById("cfgMinScore").value = cfg.min_score_alert ?? 72;
   document.getElementById("cfgTargetPrice").value = cfg.target_price_brl ?? "";
   document.getElementById("cfgSimUsd").value = cfg.simulation_amount_usd ?? 1000;
@@ -296,7 +307,7 @@ function renderHistory(items) {
     <div class="history-item">
       <div>
         <strong>${fmtBRL(it.price, 4)}</strong> — Score <strong>${it.score}/100</strong> (${it.verdict})
-        <div style="font-size:0.74rem;color:#94a3b8">${it.timestamp} • Destino: ${it.target}</div>
+        <div style="font-size:0.74rem;color:#94a3b8">${it.timestamp} • Destino: ${maskPhoneDisplay(it.target)}</div>
       </div>
       <span class="source-tag">${it.type}</span>
     </div>
@@ -330,9 +341,7 @@ function renderConnectedState(userPhone) {
 
   badge.textContent = "🟢 Conectado";
   badge.style.color = "#34d399";
-  document.getElementById("waUserPhone").textContent = userPhone
-    ? `(+${userPhone})`
-    : "";
+  document.getElementById("waUserPhone").textContent = maskPhoneDisplay(userPhone);
   closeQrModal();
   qrModalAutoOpened = false;
 }
@@ -345,6 +354,7 @@ async function pollWhatsAppStatus() {
     const connView = document.getElementById("waConnectedView");
     const qrView = document.getElementById("waQrView");
     const loadView = document.getElementById("waLoadingView");
+    const adminPanel = document.getElementById("waAdminPanel");
 
     if (st.status === "connected") {
       localStorage.setItem(
@@ -362,13 +372,14 @@ async function pollWhatsAppStatus() {
       loadView.classList.add("hidden");
       qrView.classList.remove("hidden");
 
-      badge.textContent = "📷 Aguardando Leitura do QR";
+      badge.textContent = "📷 Aguardando QR";
       badge.style.color = "#fbbf24";
       document.getElementById("waQrImg").src = st.qr_data_url;
       const modalImg = document.getElementById("waQrModalImg");
       if (modalImg) modalImg.src = st.qr_data_url;
 
-      if (!qrModalAutoOpened) {
+      // Só abre o modal automático se o painel admin estiver visível
+      if (!qrModalAutoOpened && adminPanel && !adminPanel.classList.contains("hidden")) {
         openQrModal();
         qrModalAutoOpened = true;
       }
@@ -412,6 +423,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   setInterval(() => fetchDashboardData(false), 30000);
   setInterval(pollWhatsAppStatus, 4000);
+
+  const btnToggleWaAdmin = document.getElementById("btnToggleWaAdmin");
+  const waAdminPanel = document.getElementById("waAdminPanel");
+  if (btnToggleWaAdmin && waAdminPanel) {
+    btnToggleWaAdmin.addEventListener("click", () => {
+      waAdminPanel.classList.toggle("hidden");
+    });
+  }
 
   document.getElementById("btnRefresh").addEventListener("click", () => {
     fetchDashboardData(true);

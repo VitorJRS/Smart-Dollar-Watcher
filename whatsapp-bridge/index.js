@@ -80,6 +80,8 @@ async function fetchAllGroups() {
   }
 }
 
+const FIXED_DEFAULT_PHONE = "5519999831973";
+
 async function resolveTargetJid(targetInput) {
   const raw = (targetInput || "").trim();
 
@@ -90,8 +92,8 @@ async function resolveTargetJid(targetInput) {
 
   // 2. Se tiver letras (ex: "bot de dolar"), procura nos grupos pelo nome!
   const hasLetters = /[a-zA-ZÀ-ÿ]/.test(raw);
-  if (hasLetters || !raw) {
-    const searchName = normalizeText(raw || "bot de dolar");
+  if (hasLetters) {
+    const searchName = normalizeText(raw);
     const groups = await fetchAllGroups();
 
     // Busca exata (ignorando acentos e maiúsculas)
@@ -103,24 +105,21 @@ async function resolveTargetJid(targetInput) {
     if (matched) {
       return matched.id;
     }
-    if (hasLetters) {
-      throw new Error(
-        `Grupo "${raw}" não encontrado! Verifique se você criou um grupo com o nome "${raw}" no seu WhatsApp.`
-      );
-    }
+    throw new Error(
+      `Grupo "${raw}" não encontrado! Verifique se você criou um grupo com o nome "${raw}" no seu WhatsApp.`
+    );
   }
 
-  // 3. Caso seja número de telefone ou vazio (fallback para o próprio número)
-  if (!raw) {
-    if (connectedUser && connectedUser.id) {
-      const bare = connectedUser.id.split(":")[0].split("@")[0];
-      return `${bare}@s.whatsapp.net`;
-    }
-    return null;
+  // 3. Caso seja número de telefone ou vazio (usa o número fixo 5519999831973 como padrão)
+  let digits = raw ? raw.replace(/\D/g, "") : FIXED_DEFAULT_PHONE;
+  if (!digits) {
+    digits = FIXED_DEFAULT_PHONE;
+  }
+  // Se digitou apenas DDD + número (10 ou 11 dígitos, ex: 19999831973), adiciona o DDI 55 do Brasil
+  if ((digits.length === 10 || digits.length === 11) && !digits.startsWith("55")) {
+    digits = "55" + digits;
   }
 
-  const digits = raw.replace(/\D/g, "");
-  if (!digits) return null;
   const jid = `${digits}@s.whatsapp.net`;
   if (sock) {
     try {

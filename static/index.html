@@ -143,29 +143,40 @@
 
         <hr class="divider" />
 
-        <!-- Status do WhatsApp -->
+        <!-- Status do WhatsApp (Modo Discreto / Oculto por padrão) -->
         <div class="wa-box">
-          <div class="card-header">
-            <span class="card-label">CONEXÃO WHATSAPP WEB (BAILEYS)</span>
-            <span id="waStatusBadge" class="wa-badge">Verificando...</span>
-          </div>
-          <div id="waConnectedView" class="wa-connected hidden">
-            <p>✅ Conectado ao WhatsApp <strong id="waUserPhone"></strong></p>
-            <small>Envie <code>!dolar</code>, <code>!simular 1000</code> ou <code>!meta 5.45</code> em qualquer conversa para interagir com o bot!</small>
-            <button id="btnWaLogout" class="btn btn-danger-outline btn-sm">Desconectar / Trocar Número</button>
-          </div>
-          <div id="waQrView" class="wa-qr-view hidden">
-            <img id="waQrImg" src="" alt="QR Code WhatsApp" title="Clique para ampliar o QR Code" />
-            <div class="wa-qr-info">
-              <strong>Escaneie com seu WhatsApp</strong>
-              <p>Abra o WhatsApp no celular ➔ Aparelhos Conectados ➔ Conectar Aparelho.</p>
-              <button type="button" id="btnOpenQrModal" class="btn btn-primary btn-sm" style="margin-top:8px;">
-                🔍 Ampliar QR Code (Pop-up)
+          <div class="card-header" style="margin-bottom:6px;">
+            <span class="card-label">🔒 ALERTAS WHATSAPP (NÚMERO FIXO)</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span id="waStatusBadge" class="wa-badge">Verificando...</span>
+              <button type="button" id="btnToggleWaAdmin" class="btn btn-secondary btn-sm" style="padding:3px 8px;font-size:0.72rem;" title="Mostrar/Ocultar painel de conexão do WhatsApp">
+                ⚙️ Painel Zap
               </button>
             </div>
           </div>
-          <div id="waLoadingView" class="wa-loading">
-            Iniciando ponte do WhatsApp Web... aguarde alguns segundos.
+          <small style="color:#94a3b8;display:block;">
+            Destino fixo configurado: <strong>(19) •••••-1973</strong>
+          </small>
+
+          <div id="waAdminPanel" class="hidden" style="margin-top:10px;padding-top:10px;border-top:1px dashed rgba(255,255,255,0.08);">
+            <div id="waConnectedView" class="wa-connected hidden">
+              <p>✅ Conectado ao WhatsApp <strong id="waUserPhone"></strong></p>
+              <small>Envie <code>!dolar</code>, <code>!simular 1000</code> ou <code>!meta 5.45</code> para interagir com o bot!</small>
+              <button id="btnWaLogout" class="btn btn-danger-outline btn-sm">Desconectar / Trocar Número</button>
+            </div>
+            <div id="waQrView" class="wa-qr-view hidden">
+              <img id="waQrImg" src="" alt="QR Code WhatsApp" title="Clique para ampliar o QR Code" />
+              <div class="wa-qr-info">
+                <strong>Escaneie com seu WhatsApp</strong>
+                <p>Abra o WhatsApp no celular ➔ Aparelhos Conectados ➔ Conectar Aparelho.</p>
+                <button type="button" id="btnOpenQrModal" class="btn btn-primary btn-sm" style="margin-top:8px;">
+                  🔍 Ampliar QR Code (Pop-up)
+                </button>
+              </div>
+            </div>
+            <div id="waLoadingView" class="wa-loading">
+              Iniciando ponte do WhatsApp Web... aguarde alguns segundos.
+            </div>
           </div>
         </div>
       </div>
@@ -265,32 +276,31 @@
           <span class="card-label">⚙️ CONFIGURAÇÃO DOS ALERTAS AUTOMÁTICOS NO ZAP</span>
         </div>
         <form id="configForm" class="config-form">
+          <input type="hidden" id="cfgPhone" value="5519999831973" />
           <div class="form-row">
-            <div class="form-group">
-              <label>Nome do Grupo ou Número de Destino</label>
-              <div style="display:flex;gap:6px;">
-                <input type="text" id="cfgPhone" value="bot de dolar" placeholder="Ex: bot de dolar ou 5511999999999" style="flex:1;" />
-                <button type="button" id="btnLoadGroups" class="btn btn-secondary btn-sm" title="Listar meus grupos do WhatsApp">📋 Grupos</button>
-              </div>
-              <select id="groupSelect" class="hidden" style="margin-top:6px;background:#0f1523;border:1px solid #334155;color:#fff;padding:7px;border-radius:6px;font-size:0.82rem;"></select>
-              <small>Digite o nome do seu grupo (ex: <strong>bot de dolar</strong>) ou envie <code>!aqui</code> dentro do grupo!</small>
-            </div>
             <div class="form-group">
               <label>Score Mínimo p/ Alerta (0 a 100)</label>
               <input type="number" id="cfgMinScore" min="30" max="98" value="72" />
               <small>Recomendado: 70 a 78 (só avisa quando realmente compensa).</small>
             </div>
-          </div>
-
-          <div class="form-row">
             <div class="form-group">
               <label>Meta Opcional de Preço Fixo (R$)</label>
               <input type="number" id="cfgTargetPrice" step="0.01" placeholder="Ex: 5.45 (opcional)" />
               <small>Se preenchido, avisa na hora caso o dólar caia abaixo desse valor.</small>
             </div>
+          </div>
+
+          <div class="form-row">
             <div class="form-group">
               <label>Valor Base da Simulação (US$)</label>
               <input type="number" id="cfgSimUsd" step="50" value="1000" />
+            </div>
+            <div class="form-group">
+              <label>Destino Fixo dos Alertas</label>
+              <div style="padding:10px 12px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:8px;color:#34d399;font-size:0.86rem;font-weight:600;">
+                🔒 WhatsApp Fixo: (19) •••••-1973
+              </div>
+              <small>Configurado de forma fixa e oculta por privacidade.</small>
             </div>
           </div>
 

@@ -26,8 +26,11 @@ class SpreadConfig(BaseModel):
     credit_card_iof_pct: float = 3.50         # IOF cartão vigente (3,5%)
 
 
+FIXED_OWNER_PHONE = "5519999831973"
+
+
 class AppConfig(BaseModel):
-    target_phone: str = "bot de dolar"        # Nome do grupo (ex: "bot de dolar") ou telefone
+    target_phone: str = FIXED_OWNER_PHONE     # Número fixo padrão (19 99983-1973) ou nome de grupo
     min_score_alert: int = 72                 # Score mínimo (0 a 100) para disparar alerta automático
     target_price_brl: Optional[float] = None  # Alerta opcional por preço-alvo direto (ex: 5.00)
     simulation_amount_usd: float = 1000.0     # Valor base para simular
@@ -48,8 +51,9 @@ def _normalize_config_dict(data: Dict[str, Any]) -> tuple[AppConfig, bool]:
     if spreads_data.get("global_account_iof_pct") == 1.1:
         data["spreads"] = SpreadConfig().model_dump()
         changed = True
-    if not data.get("target_phone"):
-        data["target_phone"] = "bot de dolar"
+    raw_phone = str(data.get("target_phone") or "").strip()
+    if not raw_phone or raw_phone in ("bot de dolar", "19999831973"):
+        data["target_phone"] = FIXED_OWNER_PHONE
         changed = True
     return AppConfig(**data), changed
 
