@@ -80,41 +80,58 @@ async function fetchAllGroups() {
   }
 }
 
-const FIXED_DEFAULT_PHONE = "5519999831973";
+const FIXED_DEFAULT_TARGET = "bot dolar";
 
 async function resolveTargetJid(targetInput) {
-  const raw = (targetInput || "").trim();
+  let raw = (targetInput || "").trim();
+  if (!raw) {
+    raw = FIXED_DEFAULT_TARGET;
+  }
 
   // 1. Se já for um JID explícito de grupo ou contato
   if (raw.endsWith("@g.us") || raw.endsWith("@s.whatsapp.net")) {
     return raw;
   }
 
-  // 2. Se tiver letras (ex: "bot de dolar"), procura nos grupos pelo nome!
+  // 2. Se tiver letras (ex: "bot dolar", "bot de dolar"), procura nos grupos pelo nome!
   const hasLetters = /[a-zA-ZÀ-ÿ]/.test(raw);
   if (hasLetters) {
     const searchName = normalizeText(raw);
     const groups = await fetchAllGroups();
 
-    // Busca exata (ignorando acentos e maiúsculas)
+    // 1. Busca exata (ignorando acentos e maiúsculas)
     let matched = groups.find((g) => normalizeText(g.name) === searchName);
-    // Busca parcial (contém o nome)
+    // 2. Busca parcial (contém o nome)
     if (!matched) {
       matched = groups.find((g) => normalizeText(g.name).includes(searchName));
     }
+    // 3. Busca flexível ignorando conectivos ("de", "do", "da", "grupo")
+    if (!matched) {
+      const cleanSearch = searchName
+        .replace(/\b(de|do|da|grupo)\b/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      matched = groups.find((g) => {
+        const cleanName = normalizeText(g.name)
+          .replace(/\b(de|do|da|grupo)\b/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        return cleanName.includes(cleanSearch) || cleanSearch.includes(cleanName);
+      });
+    }
+
     if (matched) {
       return matched.id;
     }
+
+    const availableNames = groups.map((g) => `"${g.name}"`).join(", ");
     throw new Error(
-      `Grupo "${raw}" não encontrado! Verifique se você criou um grupo com o nome "${raw}" no seu WhatsApp.`
+      `Grupo "${raw}" não encontrado! Grupos detectados: ${availableNames || "nenhum grupo encontrado"}.`
     );
   }
 
-  // 3. Caso seja número de telefone ou vazio (usa o número fixo 5519999831973 como padrão)
-  let digits = raw ? raw.replace(/\D/g, "") : FIXED_DEFAULT_PHONE;
-  if (!digits) {
-    digits = FIXED_DEFAULT_PHONE;
-  }
+  // 3. Caso seja número de telefone
+  let digits = raw.replace(/\D/g, "");
   // Se digitou apenas DDD + número (10 ou 11 dígitos, ex: 19999831973), adiciona o DDI 55 do Brasil
   if ((digits.length === 10 || digits.length === 11) && !digits.startsWith("55")) {
     digits = "55" + digits;

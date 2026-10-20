@@ -276,13 +276,19 @@
           <span class="card-label">⚙️ CONFIGURAÇÃO DOS ALERTAS AUTOMÁTICOS NO ZAP</span>
         </div>
         <form id="configForm" class="config-form">
-          <input type="hidden" id="cfgPhone" value="5519999831973" />
           <div class="form-row">
+            <div class="form-group">
+              <label>Grupo / Destino dos Alertas no WhatsApp</label>
+              <input type="text" id="cfgPhone" value="bot dolar" placeholder="Ex: bot dolar ou número" />
+              <small>Nome do grupo (padrão fixo: <b>bot dolar</b>) ou número com DDD.</small>
+            </div>
             <div class="form-group">
               <label>Score Mínimo p/ Alerta (0 a 100)</label>
               <input type="number" id="cfgMinScore" min="30" max="98" value="72" />
               <small>Recomendado: 70 a 78 (só avisa quando realmente compensa).</small>
             </div>
+          </div>
+          <div class="form-row">
             <div class="form-group">
               <label>Meta Opcional de Preço Fixo (R$)</label>
               <input type="number" id="cfgTargetPrice" step="0.01" placeholder="Ex: 5.45 (opcional)" />
