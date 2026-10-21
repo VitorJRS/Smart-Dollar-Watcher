@@ -31,7 +31,12 @@ from app.config import (
     BASE_DIR,
 )
 from app.db import is_postgres_enabled
-from app.market_data import fetch_spot_quote, fetch_historical_ohlc
+from app.market_data import (
+    fetch_spot_quote,
+    fetch_historical_ohlc,
+    fetch_currencies_overview,
+    normalize_currency,
+)
 from app.analyzer import analyze_dollar
 from app.whatsapp_formatter import (
     format_whatsapp_report,
@@ -43,6 +48,8 @@ from app.whatsapp_formatter import (
     format_wise_comparison,
     format_trend_report,
     format_config_status,
+    format_peso_report,
+    format_currencies_overview_report,
     fmt_brl,
     fmt_num,
 )
@@ -58,6 +65,7 @@ _ALERT_STATE: Dict[str, Any] = {
     "last_alert_ts": 0.0,
     "last_alert_price": None,
     "last_alert_score": None,
+    "prev_check_price": None,
     "last_check_ts": None,
     "last_analysis": None,
 }
@@ -117,10 +125,14 @@ def is_within_market_hours() -> bool:
 
 async def evaluate_and_maybe_alert(force_refresh: bool = False) -> Dict[str, Any]:
     cfg = load_config()
-    df = await fetch_historical_ohlc(days=180, force=force_refresh)
-    spot = await fetch_spot_quote(force=force_refresh)
+    df = await fetch_historical_ohlc(days=180, force=force_refresh, currency="USD")
+    spot = await fetch_spot_quote(force=force_refresh, currency="USD")
     analysis = analyze_dollar(df, spot, cfg)
 
+    current_price = float(spot["price"])
+    pct_change = float(spot.get("pct_change", 0.0))
+    prev_check_price = _ALERT_STATE.get("prev_check_price")
+    _ALERT_STATE["prev_check_price"] = current_price
     _ALERT_STATE["last_check_ts"] = datetime.now().isoformat()
     _ALERT_STATE["last_analysis"] = analysis
 
@@ -130,26 +142,44 @@ async def evaluate_and_maybe_alert(force_refresh: bool = False) -> Dict[str, Any
     if cfg.only_market_hours and not is_within_market_hours():
         return analysis
 
-    should_alert = analysis["score"]["should_alert"]
+    # Verifica se o dólar registrou queda (no dia ou em relação à checagem anterior)
+    dropped_vs_prev_check = (
+        prev_check_price is not None and (prev_check_price - current_price) >= 0.004
+    )
+    is_dropping = (pct_change <= -0.05) or dropped_vs_prev_check
+
+    if cfg.only_on_drop and not is_dropping:
+        return analysis
+
+    should_alert = analysis["score"]["should_alert"] or (
+        cfg.only_on_drop and (pct_change <= -0.20 or (prev_check_price is not None and (prev_check_price - current_price) >= 0.015))
+    )
     if not should_alert:
         return analysis
 
     now_ts = time.time()
     cooldown_sec = cfg.cooldown_hours * 3600.0
     elapsed = now_ts - float(_ALERT_STATE["last_alert_ts"] or 0.0)
-    current_price = float(spot["price"])
     last_price = _ALERT_STATE["last_alert_price"]
 
-    # Envia se já passou o cooldown OU se o dólar caiu mais pelo menos R$ 0,03 desde o último alerta
+    # Envia se:
+    # 1) Ainda não enviou alerta ou já passou o cooldown (desde que esteja caindo / abaixo ou igual ao último alerta)
+    # 2) OU se o dólar caiu mais pelo menos R$ 0,015 desde o último alerta enviado
     significant_extra_drop = (
-        last_price is not None and (last_price - current_price) >= 0.03
+        last_price is not None and (last_price - current_price) >= 0.015
+    )
+    cooldown_ok = elapsed >= cooldown_sec and (
+        last_price is None or current_price <= last_price or not cfg.only_on_drop
     )
 
-    if elapsed >= cooldown_sec or significant_extra_drop:
+    if cooldown_ok or significant_extra_drop:
         try:
             wa_status = await get_wa_status_internal()
             if wa_status.get("status") == "connected":
-                report_msg = format_whatsapp_report(analysis, is_auto_alert=True)
+                overview = await fetch_currencies_overview(force=False)
+                report_msg = format_whatsapp_report(
+                    analysis, is_auto_alert=True, overview=overview
+                )
                 send_res = await send_whatsapp_message(report_msg)
                 _ALERT_STATE["last_alert_ts"] = now_ts
                 _ALERT_STATE["last_alert_price"] = current_price
@@ -158,10 +188,10 @@ async def evaluate_and_maybe_alert(force_refresh: bool = False) -> Dict[str, Any
                 append_alert_history(
                     {
                         "timestamp": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                        "type": "AUTO",
+                        "type": "QUEDA AUTO" if cfg.only_on_drop else "AUTO",
                         "price": current_price,
                         "score": analysis["score"]["total"],
-                        "verdict": analysis["score"]["verdict"],
+                        "verdict": f"Queda ({pct_change:+.2f}%) • {analysis['score']['verdict']}",
                         "target": send_res.get("target", "WhatsApp"),
                     }
                 )
@@ -313,17 +343,26 @@ async def api_internal_wa_backup():
 
 
 @app.get("/api/analysis")
-async def api_get_analysis(force: bool = False, usd_amount: Optional[float] = None):
+async def api_get_analysis(
+    force: bool = False,
+    usd_amount: Optional[float] = None,
+    currency: str = "USD",
+):
+    cur = normalize_currency(currency)
     cfg = load_config()
     if usd_amount is not None and usd_amount > 0:
         cfg.simulation_amount_usd = usd_amount
-    df = await fetch_historical_ohlc(days=180, force=force)
-    spot = await fetch_spot_quote(force=force)
+    df = await fetch_historical_ohlc(days=180, force=force, currency=cur)
+    spot = await fetch_spot_quote(force=force, currency=cur)
     analysis = analyze_dollar(df, spot, cfg)
-    _ALERT_STATE["last_analysis"] = analysis
+    currencies = await fetch_currencies_overview(force=force)
+    if cur == "USD":
+        _ALERT_STATE["last_analysis"] = analysis
     _ALERT_STATE["last_check_ts"] = datetime.now().isoformat()
     return {
+        "currency": cur,
         "analysis": analysis,
+        "currencies": currencies,
         "config": cfg.model_dump(),
         "history": load_alerts_history()[:15],
         "database": "PostgreSQL (Render)" if is_postgres_enabled() else "Local JSON",
@@ -376,21 +415,27 @@ async def api_wa_logout():
 
 class TestAlertRequest(BaseModel):
     phone: Optional[str] = None
+    currency: Optional[str] = "USD"
 
 
 @app.post("/api/whatsapp/send-now")
 async def api_wa_send_now(req: TestAlertRequest):
+    cur = normalize_currency(req.currency)
     cfg = load_config()
-    df = await fetch_historical_ohlc(days=180, force=False)
-    spot = await fetch_spot_quote(force=True)
+    df = await fetch_historical_ohlc(days=180, force=False, currency=cur)
+    spot = await fetch_spot_quote(force=True, currency=cur)
     analysis = analyze_dollar(df, spot, cfg)
-    msg = format_whatsapp_report(analysis, is_auto_alert=False)
+    if cur == "ARS":
+        msg = format_peso_report(analysis)
+    else:
+        overview = await fetch_currencies_overview(force=False) if cur == "USD" else None
+        msg = format_whatsapp_report(analysis, is_auto_alert=False, overview=overview)
     try:
         res = await send_whatsapp_message(msg, phone=req.phone)
         append_alert_history(
             {
                 "timestamp": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                "type": "MANUAL",
+                "type": f"MANUAL ({cur})",
                 "price": spot["price"],
                 "score": analysis["score"]["total"],
                 "verdict": analysis["score"]["verdict"],
@@ -458,16 +503,36 @@ async def api_wa_command(payload: WhatsAppCommandPayload):
             "reply": (
                 "✅ *Destino dos alertas configurado com sucesso!*\n\n"
                 f"• *Grupo/Chat:* `{target_val}`\n"
-                "Todos os alertas automáticos de compra de dólar e testes do painel serão enviados para cá!"
+                "Todos os alertas automáticos de queda do dólar e testes do painel serão enviados para cá!"
             )
         }
 
-    # 2. !dolar / !agora / !cotacao -> Raio-X Completo
+    # 2. !dolar / !agora / !cotacao -> Raio-X Completo do Dólar + Resumo Euro e Peso
     if cmd in ("!dolar", "!dólar", "!agora", "!cotacao", "!cotação", "!status"):
-        df = await fetch_historical_ohlc(days=180, force=True)
-        spot = await fetch_spot_quote(force=True)
+        df = await fetch_historical_ohlc(days=180, force=True, currency="USD")
+        spot = await fetch_spot_quote(force=True, currency="USD")
+        analysis = analyze_dollar(df, spot, cfg)
+        overview = await fetch_currencies_overview(force=False)
+        return {"reply": format_whatsapp_report(analysis, is_auto_alert=False, overview=overview)}
+
+    # 2b. !euro / !eur -> Raio-X Completo do Euro (EUR/BRL)
+    if cmd in ("!euro", "!eur", "!euros"):
+        df = await fetch_historical_ohlc(days=180, force=True, currency="EUR")
+        spot = await fetch_spot_quote(force=True, currency="EUR")
         analysis = analyze_dollar(df, spot, cfg)
         return {"reply": format_whatsapp_report(analysis, is_auto_alert=False)}
+
+    # 2c. !peso / !ars / !argentina -> Raio-X Completo do Peso Argentino (ARS/BRL)
+    if cmd in ("!peso", "!pesos", "!ars", "!argentina", "!arg"):
+        df = await fetch_historical_ohlc(days=180, force=True, currency="ARS")
+        spot = await fetch_spot_quote(force=True, currency="ARS")
+        analysis = analyze_dollar(df, spot, cfg)
+        return {"reply": format_peso_report(analysis)}
+
+    # 2d. !moedas / !cambio -> Comparativo rápido Dólar + Euro + Peso Argentino
+    if cmd in ("!moedas", "!moeda", "!cambio", "!câmbio"):
+        overview = await fetch_currencies_overview(force=True)
+        return {"reply": format_currencies_overview_report(overview)}
 
     # 3. !score -> Sem argumento explica o Score e os 4 pilares; com número altera o gatilho
     if cmd in ("!score", "!nota", "!explicar"):
@@ -602,6 +667,21 @@ async def api_wa_command(payload: WhatsAppCommandPayload):
                 "reply": "⚠️ *Formato inválido.*\nEnvie por exemplo: `!meta 5,00` ou `!meta off` para desativar."
             }
 
+    # 10b. !queda -> Ativa/desativa filtro de avisar somente quando o dólar registrar queda
+    if cmd in ("!queda", "!quedas"):
+        if rest_str.lower() in ("off", "nao", "não", "desativar"):
+            cfg.only_on_drop = False
+        else:
+            cfg.only_on_drop = True
+        save_config(cfg)
+        state_txt = "🟢 ATIVADO (Só avisa quando o dólar cair!)" if cfg.only_on_drop else "⚪ DESATIVADO"
+        return {
+            "reply": (
+                f"📉 *Filtro de Alerta em Queda: {state_txt}*\n\n"
+                "O robô só enviará mensagens automáticas quando o dólar registrar queda real!"
+            )
+        }
+
     # 11. !config / !painel -> Mostra todas as configurações atuais
     if cmd in ("!config", "!configuracao", "!configuração", "!painel", "!regras"):
         df = await fetch_historical_ohlc(days=180, force=False)
@@ -616,7 +696,7 @@ async def api_wa_command(payload: WhatsAppCommandPayload):
         return {
             "reply": (
                 "⏸️ *Alertas automáticos PAUSADOS!*\n"
-                "Você ainda pode usar todos os comandos manuais (`!dolar`, `!simular`, etc.).\n"
+                "Você ainda pode usar todos os comandos manuais (`!dolar`, `!euro`, `!peso`, `!simular`, etc.).\n"
                 "Para reativar os alertas automáticos, envie `!retomar`."
             )
         }
@@ -627,7 +707,7 @@ async def api_wa_command(payload: WhatsAppCommandPayload):
         return {
             "reply": (
                 "▶️ *Alertas automáticos REATIVADOS!*\n"
-                f"Monitorando o dólar a cada *{cfg.check_interval_minutes} min* (Alerta em Score >= *{cfg.min_score_alert}/100*)."
+                f"Monitorando o dólar a cada *{cfg.check_interval_minutes} min* (Alerta somente em queda / Score >= *{cfg.min_score_alert}/100*)."
             )
         }
 
@@ -636,8 +716,11 @@ async def api_wa_command(payload: WhatsAppCommandPayload):
         help_text = (
             "🤖 *CENTRAL DE COMANDOS — SMART DOLLAR BOT*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "💵 *Cotações & Raio-X:*\n"
-            "• `!dolar` ou `!agora` ➔ Raio-X completo da cotação atual\n"
+            "💵 *Cotações & Raio-X (Dólar, Euro e Peso):*\n"
+            "• `!dolar` ou `!agora` ➔ Raio-X completo do Dólar + resumo das moedas\n"
+            "• `!euro` ou `!eur` ➔ Raio-X completo do Euro (EUR/BRL)\n"
+            "• `!peso` ou `!ars` ➔ Raio-X do Peso Argentino (R$ 1 em Pesos + 1.000 ARS)\n"
+            "• `!moedas` ou `!cambio` ➔ Painel comparando Dólar, Euro e Peso lado a lado\n"
             "• `!wise` ou `!taxas` ➔ Comparativo Wise PIX vs Conta Global vs Espécie vs Cartão\n\n"
             "🧠 *Entenda a Análise (Método Completo):*\n"
             "• `!score` ➔ Explica como funciona a nota de 0 a 100 e mostra os 4 pilares hoje\n"
@@ -649,6 +732,7 @@ async def api_wa_command(payload: WhatsAppCommandPayload):
             "• `!simular R$ 1000` ➔ Quantos dólares você compra com R$ 1.000\n"
             "• `!lotes 1000` ou `!dca` ➔ Plano de compra dividida em 3 lotes\n\n"
             "⚙️ *Configurar Alertas pelo Zap:*\n"
+            "• `!queda` ➔ Garante alertas automáticos só quando o dólar cair\n"
             "• `!score 75` ➔ Muda a nota mínima do alerta automático\n"
             "• `!meta` ou `!meta 5,00` ➔ Sugere ou define um alerta de preço fixo\n"
             "• `!aqui` ou `!fixar` ➔ Fixa este grupo como destino dos alertas\n"
@@ -660,6 +744,6 @@ async def api_wa_command(payload: WhatsAppCommandPayload):
     return {
         "reply": (
             f"❓ Comando `{cmd}` não reconhecido.\n"
-            "Envie `!ajuda` para ver todos os 13 comandos disponíveis (`!dolar`, `!score`, `!indicadores`, `!simular R$ 1000`, `!lotes`, `!wise`, etc.)."
+            "Envie `!ajuda` para ver todos os comandos (`!dolar`, `!euro`, `!peso`, `!moedas`, `!simular`, `!score`, etc.)."
         )
     }

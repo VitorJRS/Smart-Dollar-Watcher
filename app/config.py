@@ -37,6 +37,7 @@ class AppConfig(BaseModel):
     check_interval_minutes: int = 5           # Intervalo de checagem automática
     cooldown_hours: float = 4.0               # Tempo mínimo entre alertas do mesmo nível (evita spam)
     only_market_hours: bool = False           # Se True, só envia alertas em dias úteis das 08h às 19h
+    only_on_drop: bool = True                 # Se True, só envia alerta automático quando o dólar registrar queda
     auto_alert_enabled: bool = True
     spreads: SpreadConfig = SpreadConfig()
 
@@ -55,6 +56,9 @@ def _normalize_config_dict(data: Dict[str, Any]) -> tuple[AppConfig, bool]:
     # Se estiver vazio ou apontando para o número pessoal antigo, fixa no grupo "bot dolar"
     if not raw_phone or raw_phone in ("5519999831973", "19999831973", "bot de dolar"):
         data["target_phone"] = FIXED_DEFAULT_TARGET
+        changed = True
+    if "only_on_drop" not in data:
+        data["only_on_drop"] = True
         changed = True
     return AppConfig(**data), changed
 

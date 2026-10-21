@@ -15,8 +15,12 @@ def fmt_num(val: float, decimals: int = 2) -> str:
     return formatted.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def format_whatsapp_report(analysis: Dict[str, Any], is_auto_alert: bool = False) -> str:
-    """Formata a mensagem principal do !dolar e dos alertas automáticos."""
+def format_whatsapp_report(
+    analysis: Dict[str, Any],
+    is_auto_alert: bool = False,
+    overview: Dict[str, Dict[str, Any]] | None = None,
+) -> str:
+    """Formata a mensagem principal do !dolar (ou !euro) e dos alertas automáticos de queda."""
     spot = analysis["spot"]
     sc = analysis["score"]
     ind = analysis["indicators"]
@@ -25,16 +29,21 @@ def format_whatsapp_report(analysis: Dict[str, Any], is_auto_alert: bool = False
     sim = analysis["simulator"]
     reasons = analysis["reasons"]
 
+    cur_code = str(spot.get("currency", "USD")).upper()
+    cur_name = spot.get("short_name", "Dólar")
+    cur_sym = spot.get("symbol", "US$")
+    cur_flag = spot.get("flag", "💵")
+    decimals = int(analysis.get("decimals", 4))
+
     price = float(spot["price"])
     pct = float(spot["pct_change"])
     pct_sign = "+" if pct >= 0 else ""
     now_str = datetime.now().strftime("%d/%m/%Y às %H:%M")
 
-    header = (
-        "🚨 *ALERTA: DÓLAR BOM PARA COMPRA!* 🚨"
-        if is_auto_alert
-        else "💵 *RAIO-X DO DÓLAR AGORA* 💵"
-    )
+    if is_auto_alert:
+        header = f"📉🚨 *ALERTA: {cur_name.upper()} EM QUEDA AGORA!* 🚨📉"
+    else:
+        header = f"{cur_flag} *RAIO-X DO {cur_name.upper()} AGORA* {cur_flag}"
 
     opt_global = next((o for o in sim["options"] if o["id"] == "global_account"), sim["options"][0])
     opt_wise = next((o for o in sim["options"] if o["id"] == "wise_live"), sim["options"][0])
@@ -65,25 +74,25 @@ def format_whatsapp_report(analysis: Dict[str, Any], is_auto_alert: bool = False
         header,
         f"🕒 _{now_str}_",
         "",
-        f"🏷️ *Dólar Comercial:* *{fmt_brl(price, 4)}* ({pct_sign}{fmt_num(pct, 2)}%)",
+        f"🏷️ *{cur_name} Comercial:* *{fmt_brl(price, decimals)}* ({pct_sign}{fmt_num(pct, 2)}%)",
         f"🎯 *Nota de Compra:* *{sc['total']}/100*",
         f"{sc['verdict_emoji']} *{sc['verdict']}*",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "💳 *VALOR FINAL COM TAXAS (VET REAL)*",
-        f"• 📱 *Conta Global (Taxa 2% + IOF 3,5%):* *{fmt_brl(opt_global['vet_rate'], 4)}* _(Taxas: +{fmt_brl(opt_global['tax_per_usd'], 4)}/US$)_",
-        f"   ↳ R$ 1.000 compram *US$ {fmt_num(opt_global['usd_per_1000_brl'], 2)}* | US$ {fmt_num(usd_amt, 0)} = *{fmt_brl(opt_global['total_brl'], 2)}*",
-        f"• 🌎 *Wise PIX (API Oficial):* *{fmt_brl(opt_wise['vet_rate'], 4)}*",
-        f"   ↳ R$ 1.000 compram *US$ {fmt_num(opt_wise['usd_per_1000_brl'], 2)}* | US$ {fmt_num(usd_amt, 0)} = *{fmt_brl(opt_wise['total_brl'], 2)}*",
-        f"• 💵 *Espécie:* {fmt_brl(opt_cash['vet_rate'], 4)} | 💳 *Cartão:* {fmt_brl(opt_card['vet_rate'], 4)}",
+        f"• 📱 *Conta Global (Taxa 2% + IOF 3,5%):* *{fmt_brl(opt_global['vet_rate'], decimals)}* _(Taxas: +{fmt_brl(opt_global['tax_per_usd'], decimals)}/{cur_sym})_",
+        f"   ↳ R$ 1.000 compram *{cur_sym} {fmt_num(opt_global['usd_per_1000_brl'], 2)}* | {cur_sym} {fmt_num(usd_amt, 0)} = *{fmt_brl(opt_global['total_brl'], 2)}*",
+        f"• 🌎 *Wise PIX (API Oficial):* *{fmt_brl(opt_wise['vet_rate'], decimals)}*",
+        f"   ↳ R$ 1.000 compram *{cur_sym} {fmt_num(opt_wise['usd_per_1000_brl'], 2)}* | {cur_sym} {fmt_num(usd_amt, 0)} = *{fmt_brl(opt_wise['total_brl'], 2)}*",
+        f"• 💵 *Espécie:* {fmt_brl(opt_cash['vet_rate'], decimals)} | 💳 *Cartão:* {fmt_brl(opt_card['vet_rate'], decimals)}",
         sav_line,
         "",
         "📊 *INDICADORES TÉCNICOS & HISTÓRICO*",
-        f"• *Últimos 30d:* Mais barato que *{st['cheaper_than_30d_pct']:.0f}%* dos dias (Méd: {fmt_brl(st['mean30'], 4)})",
-        f"• *Últimos 90d:* Mais barato que *{st['cheaper_than_90d_pct']:.0f}%* dos dias (Méd: {fmt_brl(st['mean90'], 4)})",
-        f"• *Mínima 30d:* {fmt_brl(st['min30'], 4)} | *Máxima 30d:* {fmt_brl(st['max30'], 4)}",
+        f"• *Últimos 30d:* Mais barato que *{st['cheaper_than_30d_pct']:.0f}%* dos dias (Méd: {fmt_brl(st['mean30'], decimals)})",
+        f"• *Últimos 90d:* Mais barato que *{st['cheaper_than_90d_pct']:.0f}%* dos dias (Méd: {fmt_brl(st['mean90'], decimals)})",
+        f"• *Mínima 30d:* {fmt_brl(st['min30'], decimals)} | *Máxima 30d:* {fmt_brl(st['max30'], decimals)}",
         f"• *RSI (14):* {fmt_num(rsi_val, 1)} ({rsi_tag})",
-        f"• *Bollinger:* {ind['bb_pct_b']:.0f}% da banda (Piso: {fmt_brl(ind['bb_lower'], 4)})",
+        f"• *Bollinger:* {ind['bb_pct_b']:.0f}% da banda (Piso: {fmt_brl(ind['bb_lower'], decimals)})",
         f"• *Z-Score:* {st['zscore30']:+.2f}σ (30d) | {st['zscore90']:+.2f}σ (90d)",
         "",
         "🛡️ *TIMING (ANTI-FACA CAINDO)*",
@@ -99,10 +108,29 @@ def format_whatsapp_report(analysis: Dict[str, Any], is_auto_alert: bool = False
         if con_lines:
             lines.append(con_lines)
 
+    if overview and cur_code == "USD":
+        eur_info = overview.get("EUR")
+        ars_info = overview.get("ARS")
+        if eur_info or ars_info:
+            lines.append("━━━━━━━━━━━━━━━━━━━━")
+            lines.append("🌍 *OUTRAS MOEDAS AGORA*")
+            if eur_info:
+                epct = float(eur_info["pct_change"])
+                esign = "+" if epct >= 0 else ""
+                lines.append(
+                    f"• 🇪🇺 *Euro (EUR):* *{fmt_brl(eur_info['price'], 4)}* ({esign}{fmt_num(epct, 2)}%) | Wise: {fmt_brl(eur_info['vet_wise'], 4)}"
+                )
+            if ars_info:
+                apct = float(ars_info["pct_change"])
+                asign = "+" if apct >= 0 else ""
+                lines.append(
+                    f"• 🇦🇷 *Peso Arg (ARS):* *{fmt_brl(ars_info['price'], 4)}* ({asign}{fmt_num(apct, 2)}%) ➔ *R$ 1 = {fmt_num(ars_info['units_per_1_brl'], 0)} ARS* (1.000 ARS = {fmt_brl(ars_info['brl_per_1000_units'], 2)})"
+                )
+
     lines.extend(
         [
             "",
-            "💡 _Comandos:_ `!dolar` | `!score` | `!indicadores` | `!simular R$ 1000` | `!lotes` | `!wise` | `!ajuda`",
+            "💡 _Comandos:_ `!dolar` | `!euro` | `!peso` | `!moedas` | `!score` | `!simular R$ 1000` | `!ajuda`",
         ]
     )
 
@@ -391,14 +419,16 @@ def format_config_status(cfg: AppConfig, analysis: Dict[str, Any]) -> str:
     """Mostra as configurações atuais do robô (!config)."""
     st = analysis["statistics"]
     ind = analysis["indicators"]
-    meta_str = fmt_brl(cfg.target_price_brl, 4) if cfg.target_price_brl else "Desativada (monitorando apenas pelo Score)"
+    meta_str = fmt_brl(cfg.target_price_brl, 4) if cfg.target_price_brl else "Desativada (monitorando pelo Score e Queda)"
     status_str = "🟢 ATIVO" if cfg.auto_alert_enabled else "🔴 PAUSADO"
+    drop_str = "🟢 ATIVADO (Só avisa quando cair)" if cfg.only_on_drop else "⚪ Desativado"
 
     lines = [
         "⚙️ *CONFIGURAÇÕES ATUAIS DO ROBÔ*",
         "━━━━━━━━━━━━━━━━━━━━",
         f"• *Monitoramento Automático:* *{status_str}*",
-        f"• *Grupo / Destino dos Alertas:* `{cfg.target_phone or 'Automático'}`",
+        f"• *Filtro Só em Queda:* *{drop_str}*",
+        f"• *Grupo / Destino dos Alertas:* `{cfg.target_phone or 'bot dolar'}`",
         f"• *Score Mínimo p/ Alerta:* *{cfg.min_score_alert}/100*",
         f"• *Meta Fixa de Preço:* *{meta_str}*",
         f"• *Valor Base de Simulação:* *US$ {fmt_num(cfg.simulation_amount_usd, 0)}*",
@@ -410,8 +440,136 @@ def format_config_status(cfg: AppConfig, analysis: Dict[str, Any]) -> str:
         f"• Banda Inferior Bollinger: `{fmt_brl(ind['bb_lower'], 4)}` ➔ envie `!meta {fmt_num(ind['bb_lower'], 4)}`",
         "",
         "🔧 *Como alterar pelo WhatsApp:*",
-        "• `!score 75` | `!meta 5,00` | `!aqui` | `!pausar` | `!retomar`",
+        "• `!score 75` | `!meta 5,00` | `!queda` | `!aqui` | `!pausar` | `!retomar`",
     ]
+    return "\n".join(lines)
+
+
+def format_peso_report(analysis: Dict[str, Any]) -> str:
+    """Formata um Raio-X completo e prático para o Peso Argentino (ARS) (!peso / !ars)."""
+    spot = analysis["spot"]
+    sc = analysis["score"]
+    ind = analysis["indicators"]
+    st = analysis["statistics"]
+    tm = analysis["timing"]
+    sim = analysis["simulator"]
+
+    price = float(spot["price"])
+    pct = float(spot["pct_change"])
+    pct_sign = "+" if pct >= 0 else ""
+    now_str = datetime.now().strftime("%d/%m/%Y às %H:%M")
+
+    opt_global = next((o for o in sim["options"] if o["id"] == "global_account"), sim["options"][0])
+    opt_wise = next((o for o in sim["options"] if o["id"] == "wise_live"), sim["options"][0])
+
+    vet_wise = float(opt_wise["vet_rate"])
+    vet_global = float(opt_global["vet_rate"])
+
+    ars_per_1_brl_com = 1.0 / price if price > 0 else 0
+    ars_per_1_brl_wise = 1.0 / vet_wise if vet_wise > 0 else 0
+    ars_per_100_brl_wise = 100.0 / vet_wise if vet_wise > 0 else 0
+    ars_per_1000_brl_wise = 1000.0 / vet_wise if vet_wise > 0 else 0
+
+    brl_1000_ars_com = price * 1000.0
+    brl_10000_ars_wise = vet_wise * 10000.0
+    brl_100000_ars_wise = vet_wise * 100000.0
+
+    rsi_val = float(ind["rsi14"])
+    rsi_tag = "Barato / Sobrevenda 🟢" if rsi_val < 38 else ("Caro / Sobrecompra 🔴" if rsi_val > 60 else "Neutro 🟡")
+
+    lines = [
+        "🇦🇷 *RAIO-X DO PESO ARGENTINO (ARS) AGORA* 🇦🇷",
+        f"🕒 _{now_str}_",
+        "",
+        f"🏷️ *Cotação Unitária (1 ARS):* *{fmt_brl(price, 4)}* ({pct_sign}{fmt_num(pct, 2)}%)",
+        f"📦 *Lote de 1.000 ARS (Comercial):* *{fmt_brl(brl_1000_ars_com, 2)}*",
+        f"🎯 *Nota de Compra:* *{sc['total']}/100* — {sc['verdict_emoji']} *{sc['verdict']}*",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "🔄 *CONVERSÃO PRÁTICA (QUANTO VALE SEU REAL)*",
+        f"• *R$ 1,00 Comercial:* vale *{fmt_num(ars_per_1_brl_com, 1)} ARS*",
+        f"• *R$ 1,00 c/ Taxas (Wise):* vale *{fmt_num(ars_per_1_brl_wise, 1)} ARS*",
+        f"• *R$ 100,00 na Wise:* compram *{fmt_num(ars_per_100_brl_wise, 0)} ARS*",
+        f"• *R$ 1.000,00 na Wise:* compram *{fmt_num(ars_per_1000_brl_wise, 0)} ARS*",
+        "",
+        "💳 *QUANTO CUSTA COMPRAR PESOS (JÁ COM IOF + TAXAS)*",
+        f"• *10.000 ARS:* *{fmt_brl(brl_10000_ars_wise, 2)}* (Wise) | *{fmt_brl(vet_global * 10000, 2)}* (Conta Global)",
+        f"• *100.000 ARS:* *{fmt_brl(brl_100000_ars_wise, 2)}* (Wise) | *{fmt_brl(vet_global * 100000, 2)}* (Conta Global)",
+        "",
+        "📊 *HISTÓRICO E INDICADORES (ARS/BRL)*",
+        f"• *Últimos 30d:* Mais barato que *{st['cheaper_than_30d_pct']:.0f}%* dos dias",
+        f"• *Mínima 30d (1.000 ARS):* {fmt_brl(st['min30'] * 1000, 2)} | *Máxima 30d:* {fmt_brl(st['max30'] * 1000, 2)}",
+        f"• *RSI (14):* {fmt_num(rsi_val, 1)} ({rsi_tag})",
+        f"• *Bollinger:* {ind['bb_pct_b']:.0f}% da banda",
+        f"• *Recomendação:* {tm['advice']}",
+        "",
+        "💡 _Comandos:_ `!dolar` | `!euro` | `!peso` | `!moedas`",
+    ]
+    return "\n".join(lines)
+
+
+def format_currencies_overview_report(overview: Dict[str, Dict[str, Any]]) -> str:
+    """Formata o painel comparativo das 3 moedas (!moedas / !cambio)."""
+    now_str = datetime.now().strftime("%d/%m/%Y às %H:%M")
+    usd = overview.get("USD", {})
+    eur = overview.get("EUR", {})
+    ars = overview.get("ARS", {})
+
+    lines = [
+        "🌍 *PAINEL DE MOEDAS EM TEMPO REAL* 🌍",
+        f"🕒 _{now_str}_",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if usd:
+        upct = float(usd.get("pct_change", 0))
+        usign = "+" if upct >= 0 else ""
+        uarrow = "📉" if upct < 0 else "📈"
+        lines.extend(
+            [
+                f"🇺🇸 *DÓLAR COMERCIAL (USD)* {uarrow}",
+                f"• *Comercial:* *{fmt_brl(usd['price'], 4)}* ({usign}{fmt_num(upct, 2)}%)",
+                f"• *VET Wise / Global:* *{fmt_brl(usd['vet_wise'], 4)}* / *{fmt_brl(usd['vet_global'], 4)}*",
+                f"• *R$ 1.000 compram:* *US$ {fmt_num(1000.0 / usd['vet_wise'], 2)}* (Wise)",
+                "",
+            ]
+        )
+
+    if eur:
+        epct = float(eur.get("pct_change", 0))
+        esign = "+" if epct >= 0 else ""
+        earrow = "📉" if epct < 0 else "📈"
+        lines.extend(
+            [
+                f"🇪🇺 *EURO COMERCIAL (EUR)* {earrow}",
+                f"• *Comercial:* *{fmt_brl(eur['price'], 4)}* ({esign}{fmt_num(epct, 2)}%)",
+                f"• *VET Wise / Global:* *{fmt_brl(eur['vet_wise'], 4)}* / *{fmt_brl(eur['vet_global'], 4)}*",
+                f"• *R$ 1.000 compram:* *€ {fmt_num(1000.0 / eur['vet_wise'], 2)}* (Wise)",
+                "",
+            ]
+        )
+
+    if ars:
+        apct = float(ars.get("pct_change", 0))
+        asign = "+" if apct >= 0 else ""
+        aarrow = "📉" if apct < 0 else "📈"
+        lines.extend(
+            [
+                f"🇦🇷 *PESO ARGENTINO (ARS)* {aarrow}",
+                f"• *Comercial (1 ARS):* *{fmt_brl(ars['price'], 4)}* ({asign}{fmt_num(apct, 2)}%)",
+                f"• *Lote 1.000 ARS:* *{fmt_brl(ars['brl_per_1000_units'], 2)}* (Comercial) | *{fmt_brl(ars['brl_per_1000_units_vet'], 2)}* (Wise)",
+                f"• *R$ 1,00 vale:* *{fmt_num(ars['units_per_1_brl'], 1)} ARS* (Comercial) | *{fmt_num(ars['units_per_1_brl_vet'], 1)} ARS* (Wise)",
+                f"• *R$ 1.000 compram:* *{fmt_num(1000.0 * ars['units_per_1_brl_vet'], 0)} ARS* (Wise)",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "━━━━━━━━━━━━━━━━━━━━",
+            "💡 _Para ver o Raio-X completo de cada moeda, envie:_ `!dolar`, `!euro` ou `!peso`",
+        ]
+    )
     return "\n".join(lines)
 
 

@@ -31,17 +31,65 @@
   </header>
 
   <main class="container">
+    <!-- BARRA DE MOEDAS EM TEMPO REAL (DÓLAR, EURO E PESO ARGENTINO) -->
+    <section class="currencies-bar">
+      <div class="currency-tab active" data-currency="USD" id="tabUSD">
+        <div class="cur-left">
+          <span class="cur-flag">🇺🇸</span>
+          <div>
+            <span class="cur-title">Dólar Comercial (USD)</span>
+            <strong class="cur-price" id="barUsdPrice">R$ --</strong>
+          </div>
+        </div>
+        <div class="cur-right">
+          <span class="cur-change" id="barUsdChange">--%</span>
+          <small id="barUsdSub">Wise: R$ --</small>
+        </div>
+      </div>
+
+      <div class="currency-tab" data-currency="EUR" id="tabEUR">
+        <div class="cur-left">
+          <span class="cur-flag">🇪🇺</span>
+          <div>
+            <span class="cur-title">Euro Comercial (EUR)</span>
+            <strong class="cur-price" id="barEurPrice">R$ --</strong>
+          </div>
+        </div>
+        <div class="cur-right">
+          <span class="cur-change" id="barEurChange">--%</span>
+          <small id="barEurSub">Wise: R$ --</small>
+        </div>
+      </div>
+
+      <div class="currency-tab" data-currency="ARS" id="tabARS">
+        <div class="cur-left">
+          <span class="cur-flag">🇦🇷</span>
+          <div>
+            <span class="cur-title">Peso Argentino (ARS)</span>
+            <strong class="cur-price" id="barArsPrice">R$ --</strong>
+          </div>
+        </div>
+        <div class="cur-right">
+          <span class="cur-change" id="barArsChange">--%</span>
+          <small id="barArsSub">R$ 1 = -- ARS</small>
+        </div>
+      </div>
+    </section>
+
     <!-- LINHA 1: HERO COTAÇÃO + TERMÔMETRO SCORE + DETECTOR ANTI-FACA CAINDO -->
     <section class="grid-hero">
       <!-- Card Cotação Spot -->
       <div class="card spot-card">
         <div class="card-header">
-          <span class="card-label">DÓLAR COMERCIAL (SPOT)</span>
+          <span class="card-label" id="spotCardTitle">DÓLAR COMERCIAL (SPOT)</span>
           <span id="spotSource" class="source-tag">--</span>
         </div>
         <div class="spot-price-row">
           <div class="spot-price" id="spotPrice">R$ --</div>
           <div class="spot-change" id="spotChange">--%</div>
+        </div>
+        <div id="arsConversionBanner" class="hidden" style="margin-bottom:12px;padding:8px 12px;background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.28);border-radius:8px;font-size:0.84rem;color:#e2e8f0;">
+          🇦🇷 <strong>R$ 1,00</strong> = <strong id="arsPerReal" style="color:#38bdf8">-- ARS</strong> &nbsp;|&nbsp; <strong>1.000 ARS</strong> = <strong id="brlPer1000Ars" style="color:#34d399">R$ --</strong>
         </div>
         <div class="spot-subgrid">
           <div class="mini-stat">
@@ -294,19 +342,9 @@
               <input type="number" id="cfgTargetPrice" step="0.01" placeholder="Ex: 5.45 (opcional)" />
               <small>Se preenchido, avisa na hora caso o dólar caia abaixo desse valor.</small>
             </div>
-          </div>
-
-          <div class="form-row">
             <div class="form-group">
               <label>Valor Base da Simulação (US$)</label>
               <input type="number" id="cfgSimUsd" step="50" value="1000" />
-            </div>
-            <div class="form-group">
-              <label>Destino Fixo dos Alertas</label>
-              <div style="padding:10px 12px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:8px;color:#34d399;font-size:0.86rem;font-weight:600;">
-                🔒 WhatsApp Fixo: (19) •••••-1973
-              </div>
-              <small>Configurado de forma fixa e oculta por privacidade.</small>
             </div>
           </div>
 
@@ -318,7 +356,7 @@
             <div class="form-group">
               <label>Cooldown Anti-Spam (horas)</label>
               <input type="number" id="cfgCooldown" step="0.5" min="0.5" max="24" value="4" />
-              <small>Pausa entre alertas repetidos (exceto se cair mais R$ 0,03).</small>
+              <small>Pausa entre alertas repetidos (exceto se cair mais R$ 0,015).</small>
             </div>
           </div>
 
@@ -326,6 +364,10 @@
             <label class="checkbox-label">
               <input type="checkbox" id="cfgAutoEnabled" checked />
               Monitoramento Automático Ativo
+            </label>
+            <label class="checkbox-label" style="color:#34d399;font-weight:600;">
+              <input type="checkbox" id="cfgOnlyOnDrop" checked />
+              📉 Avisar SOMENTE quando o dólar registrar queda
             </label>
             <label class="checkbox-label">
               <input type="checkbox" id="cfgMarketHours" />

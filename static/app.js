@@ -1,6 +1,7 @@
 let priceChartInstance = null;
 let currentConfig = null;
 let configLoadedOnce = false;
+let activeCurrency = "USD";
 
 function fmtBRL(val, decimals = 4) {
   if (val === null || val === undefined || isNaN(val)) return "R$ --";
@@ -13,6 +14,37 @@ function fmtBRL(val, decimals = 4) {
   );
 }
 
+function renderCurrenciesBar(currencies) {
+  if (!currencies) return;
+  const usd = currencies.USD;
+  const eur = currencies.EUR;
+  const ars = currencies.ARS;
+
+  if (usd) {
+    document.getElementById("barUsdPrice").textContent = fmtBRL(usd.price, 4);
+    const ch = document.getElementById("barUsdChange");
+    ch.textContent = `${usd.pct_change >= 0 ? "+" : ""}${Number(usd.pct_change).toFixed(2)}%`;
+    ch.className = "cur-change " + (usd.pct_change <= 0 ? "change-down" : "change-up");
+    document.getElementById("barUsdSub").textContent = `Wise: ${fmtBRL(usd.vet_wise, 4)}`;
+  }
+
+  if (eur) {
+    document.getElementById("barEurPrice").textContent = fmtBRL(eur.price, 4);
+    const ch = document.getElementById("barEurChange");
+    ch.textContent = `${eur.pct_change >= 0 ? "+" : ""}${Number(eur.pct_change).toFixed(2)}%`;
+    ch.className = "cur-change " + (eur.pct_change <= 0 ? "change-down" : "change-up");
+    document.getElementById("barEurSub").textContent = `Wise: ${fmtBRL(eur.vet_wise, 4)}`;
+  }
+
+  if (ars) {
+    document.getElementById("barArsPrice").textContent = fmtBRL(ars.price, 4);
+    const ch = document.getElementById("barArsChange");
+    ch.textContent = `${ars.pct_change >= 0 ? "+" : ""}${Number(ars.pct_change).toFixed(2)}%`;
+    ch.className = "cur-change " + (ars.pct_change <= 0 ? "change-down" : "change-up");
+    document.getElementById("barArsSub").textContent = `R$ 1 = ${Number(ars.units_per_1_brl).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} ARS`;
+  }
+}
+
 async function fetchDashboardData(force = false) {
   const simInput = document.getElementById("simUsdInput");
   const usdAmt = simInput ? parseFloat(simInput.value) || 1000 : 1000;
@@ -21,10 +53,13 @@ async function fetchDashboardData(force = false) {
 
   try {
     const resp = await fetch(
-      `/api/analysis?force=${force ? "true" : "false"}&usd_amount=${usdAmt}`
+      `/api/analysis?force=${force ? "true" : "false"}&usd_amount=${usdAmt}&currency=${activeCurrency}`
     );
     if (!resp.ok) throw new Error("Falha ao carregar análise");
     const data = await resp.json();
+    if (data.currencies) {
+      renderCurrenciesBar(data.currencies);
+    }
     renderAnalysis(data.analysis);
     renderHistory(data.history || []);
     if (!configLoadedOnce && data.config) {
@@ -46,20 +81,38 @@ function renderAnalysis(a) {
   const st = a.statistics;
   const tm = a.timing;
   const sim = a.simulator;
+  const curCode = a.currency || spot.currency || "USD";
+  const curSym = spot.symbol || "US$";
+  const dec = curCode === "ARS" ? 4 : 4;
 
   // 1. Spot Card
-  document.getElementById("spotPrice").textContent = fmtBRL(spot.price, 4);
+  const titleEl = document.getElementById("spotCardTitle");
+  if (titleEl) {
+    titleEl.textContent = `${spot.flag || "💵"} ${(spot.name || "DÓLAR COMERCIAL").toUpperCase()} (SPOT)`;
+  }
+  document.getElementById("spotPrice").textContent = fmtBRL(spot.price, dec);
   document.getElementById("spotSource").textContent = spot.source || "Tempo Real";
+
+  const arsBanner = document.getElementById("arsConversionBanner");
+  if (arsBanner) {
+    if (curCode === "ARS" && spot.price > 0) {
+      arsBanner.classList.remove("hidden");
+      document.getElementById("arsPerReal").textContent = `${(1.0 / spot.price).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} ARS`;
+      document.getElementById("brlPer1000Ars").textContent = fmtBRL(spot.price * 1000, 2);
+    } else {
+      arsBanner.classList.add("hidden");
+    }
+  }
 
   const pct = Number(spot.pct_change || 0);
   const chEl = document.getElementById("spotChange");
   chEl.textContent = `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
   chEl.className = "spot-change " + (pct <= 0 ? "change-down" : "change-up");
 
-  document.getElementById("spotLow").textContent = fmtBRL(spot.low, 4);
-  document.getElementById("spotHigh").textContent = fmtBRL(spot.high, 4);
-  document.getElementById("statMin30").textContent = fmtBRL(st.min30, 4);
-  document.getElementById("statMean30").textContent = fmtBRL(st.mean30, 4);
+  document.getElementById("spotLow").textContent = fmtBRL(spot.low, dec);
+  document.getElementById("spotHigh").textContent = fmtBRL(spot.high, dec);
+  document.getElementById("statMin30").textContent = fmtBRL(st.min30, dec);
+  document.getElementById("statMean30").textContent = fmtBRL(st.mean30, dec);
 
   // Reasons list
   const rList = document.getElementById("reasonsList");
@@ -152,9 +205,9 @@ function renderAnalysis(a) {
   sim.options.forEach((opt) => {
     const tr = document.createElement("tr");
     if (opt.recommended) tr.className = "recommended-row";
-    const taxStr = opt.tax_per_usd ? `+${fmtBRL(opt.tax_per_usd, 4)}/US$` : "";
+    const taxStr = opt.tax_per_usd ? `+${fmtBRL(opt.tax_per_usd, 4)}/${curSym}` : "";
     const per1000Str = opt.usd_per_1000_brl
-      ? `<div style="font-size:0.74rem;color:#34d399">R$ 1.000 = <strong>US$ ${opt.usd_per_1000_brl.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></div>`
+      ? `<div style="font-size:0.74rem;color:#34d399">R$ 1.000 = <strong>${curSym} ${opt.usd_per_1000_brl.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>`
       : "";
     tr.innerHTML = `
       <td>
@@ -178,12 +231,12 @@ function renderAnalysis(a) {
   if (savMean >= 0) {
     callout.style.borderLeftColor = "#10b981";
     callout.innerHTML = `
-      💰 <strong>Compensa no bolso:</strong> Comprando <strong>US$ ${sim.usd_amount.toLocaleString("pt-BR")}</strong> hoje via Conta Global, você economiza <strong>${fmtBRL(savMean, 2)}</strong> em relação à média dos últimos 30 dias (e <strong>${fmtBRL(savMax, 2)}</strong> vs topo do mês). Além disso, economiza <strong>${fmtBRL(savCard, 2)}</strong> comparado ao Cartão de Crédito tradicional!
+      💰 <strong>Compensa no bolso:</strong> Comprando <strong>${curSym} ${sim.usd_amount.toLocaleString("pt-BR")}</strong> hoje via Conta Global, você economiza <strong>${fmtBRL(savMean, 2)}</strong> em relação à média dos últimos 30 dias (e <strong>${fmtBRL(savMax, 2)}</strong> vs topo do mês). Além disso, economiza <strong>${fmtBRL(savCard, 2)}</strong> comparado ao Cartão de Crédito tradicional!
     `;
   } else {
     callout.style.borderLeftColor = "#f59e0b";
     callout.innerHTML = `
-      ⏳ <strong>Atenção ao preço:</strong> Hoje US$ ${sim.usd_amount.toLocaleString("pt-BR")} sai <strong>${fmtBRL(Math.abs(savMean), 2)} mais caro</strong> que a média dos últimos 30 dias. Ainda assim, usar Conta Global economiza <strong>${fmtBRL(savCard, 2)}</strong> vs Cartão de Crédito.
+      ⏳ <strong>Atenção ao preço:</strong> Hoje ${curSym} ${sim.usd_amount.toLocaleString("pt-BR")} sai <strong>${fmtBRL(Math.abs(savMean), 2)} mais caro</strong> que a média dos últimos 30 dias. Ainda assim, usar Conta Global economiza <strong>${fmtBRL(savCard, 2)}</strong> vs Cartão de Crédito.
     `;
   }
 
@@ -292,6 +345,8 @@ function populateConfigForm(cfg) {
   document.getElementById("cfgInterval").value = cfg.check_interval_minutes ?? 5;
   document.getElementById("cfgCooldown").value = cfg.cooldown_hours ?? 4;
   document.getElementById("cfgAutoEnabled").checked = Boolean(cfg.auto_alert_enabled);
+  const onlyDropEl = document.getElementById("cfgOnlyOnDrop");
+  if (onlyDropEl) onlyDropEl.checked = cfg.only_on_drop !== undefined ? Boolean(cfg.only_on_drop) : true;
   document.getElementById("cfgMarketHours").checked = Boolean(cfg.only_market_hours);
 }
 
@@ -424,6 +479,25 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(() => fetchDashboardData(false), 30000);
   setInterval(pollWhatsAppStatus, 4000);
 
+  // Clique nas abas de moedas (USD, EUR, ARS)
+  document.querySelectorAll(".currency-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const cur = tab.getAttribute("data-currency") || "USD";
+      activeCurrency = cur;
+      document.querySelectorAll(".currency-tab").forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      const simInput = document.getElementById("simUsdInput");
+      if (simInput) {
+        if (cur === "ARS" && parseFloat(simInput.value) <= 2000) {
+          simInput.value = 100000;
+        } else if (cur !== "ARS" && parseFloat(simInput.value) >= 50000) {
+          simInput.value = 1000;
+        }
+      }
+      fetchDashboardData(false);
+    });
+  });
+
   const btnToggleWaAdmin = document.getElementById("btnToggleWaAdmin");
   const waAdminPanel = document.getElementById("waAdminPanel");
   if (btnToggleWaAdmin && waAdminPanel) {
@@ -467,7 +541,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const resp = await fetch("/api/whatsapp/send-now", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone, currency: activeCurrency }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Falha ao enviar");
@@ -527,6 +601,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("configForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const targetPriceRaw = document.getElementById("cfgTargetPrice").value.trim();
+    const onlyDropEl = document.getElementById("cfgOnlyOnDrop");
     const payload = {
       target_phone: document.getElementById("cfgPhone").value.trim(),
       min_score_alert: parseInt(document.getElementById("cfgMinScore").value, 10) || 72,
@@ -535,6 +610,7 @@ document.addEventListener("DOMContentLoaded", () => {
       check_interval_minutes: parseInt(document.getElementById("cfgInterval").value, 10) || 5,
       cooldown_hours: parseFloat(document.getElementById("cfgCooldown").value) || 4,
       auto_alert_enabled: document.getElementById("cfgAutoEnabled").checked,
+      only_on_drop: onlyDropEl ? onlyDropEl.checked : true,
       only_market_hours: document.getElementById("cfgMarketHours").checked,
       spreads: currentConfig?.spreads || undefined,
     };
