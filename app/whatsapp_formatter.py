@@ -573,6 +573,52 @@ def format_currencies_overview_report(overview: Dict[str, Dict[str, Any]]) -> st
     return "\n".join(lines)
 
 
+def format_update_release_note(overview: Dict[str, Dict[str, Any]]) -> str:
+    """Formata a Nota Oficial de Atualização 2.0 e Novos Comandos para envio no WhatsApp."""
+    usd = overview.get("USD", {})
+    eur = overview.get("EUR", {})
+    ars = overview.get("ARS", {})
+
+    u_price = fmt_brl(float(usd.get("price", 0)), 4) if usd else "--"
+    u_wise = fmt_brl(float(usd.get("vet_wise", 0)), 4) if usd else "--"
+    e_price = fmt_brl(float(eur.get("price", 0)), 4) if eur else "--"
+    e_wise = fmt_brl(float(eur.get("vet_wise", 0)), 4) if eur else "--"
+    a_price = fmt_brl(float(ars.get("price", 0)), 4) if ars else "--"
+    a_per_brl = fmt_num(float(ars.get("units_per_1_brl", 0)), 0) if ars else "--"
+    a_1000 = fmt_brl(float(ars.get("brl_per_1000_units", 0)), 2) if ars else "--"
+
+    lines = [
+        "🚀 *NOTA DE ATUALIZAÇÃO — SMART DOLLAR BOT 2.0* 🚀",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "O robô acabou de receber grandes melhorias! Confira as novidades já ativas:",
+        "",
+        "1️⃣ 🌍 *EURO (EUR) E PESO ARGENTINO (ARS) AO VIVO*",
+        f"• 🇺🇸 *Dólar Comercial:* *{u_price}* _(Wise: {u_wise})_",
+        f"• 🇪🇺 *Euro Comercial:* *{e_price}* _(Wise: {e_wise})_",
+        f"• 🇦🇷 *Peso Argentino:* *{a_price}* ➔ *R$ 1,00 = {a_per_brl} ARS* _(1.000 ARS = {a_1000})_",
+        "",
+        "2️⃣ 📉 *ALERTA AUTOMÁTICO INTELIGENTE (SÓ EM QUEDA)*",
+        "• Agora o monitoramento automático foi calibrado para *avisar somente quando o dólar registrar uma queda real*!",
+        "• Se o dólar estiver subindo ou parado, ele não manda mensagem repetida.",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "🆕 *NOVOS COMANDOS DISPONÍVEIS NO GRUPO:*",
+        "• `!euro` ou `!eur` ➔ Raio-X completo do *Euro* (Cotação, Wise, Conta Global, RSI, Bollinger e Score 0-100)",
+        "• `!peso` ou `!ars` ➔ Raio-X do *Peso Argentino* (Quanto vale R$ 1 em Pesos, custo de 10.000 e 100.000 ARS com taxas e indicadores)",
+        "• `!moedas` ou `!cambio` ➔ Painel comparando *Dólar, Euro e Peso Argentino* lado a lado",
+        "• `!queda` ➔ Verifica ou ativa o filtro de avisar somente nas quedas",
+        "",
+        "📋 *TODOS OS COMANDOS DO BOT:*",
+        "• *Cotações:* `!dolar` | `!euro` | `!peso` | `!moedas` | `!wise`",
+        "• *Simulação:* `!simular 1000` | `!simular R$ 1000` | `!lotes 1000`",
+        "• *Análise:* `!score` | `!indicadores` | `!historico` | `!tendencia`",
+        "• *Controle:* `!meta` | `!queda` | `!config` | `!pausar` | `!retomar` | `!ajuda`",
+        "",
+        "💡 _Teste agora mesmo mandando_ `!moedas`, `!euro` _ou_ `!peso` _aqui no grupo!_",
+    ]
+    return "\n".join(lines)
+
+
 def format_simulation_report(
     analysis: Dict[str, Any],
     amount: float,

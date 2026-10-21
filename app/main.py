@@ -30,7 +30,7 @@ from app.config import (
     clear_wa_auth_from_db,
     BASE_DIR,
 )
-from app.db import is_postgres_enabled
+from app.db import is_postgres_enabled, db_get_json, db_set_json
 from app.market_data import (
     fetch_spot_quote,
     fetch_historical_ohlc,
@@ -50,6 +50,7 @@ from app.whatsapp_formatter import (
     format_config_status,
     format_peso_report,
     format_currencies_overview_report,
+    format_update_release_note,
     fmt_brl,
     fmt_num,
 )
@@ -201,11 +202,41 @@ async def evaluate_and_maybe_alert(force_refresh: bool = False) -> Dict[str, Any
     return analysis
 
 
+_RELEASE_NOTE_SENT_MEM = False
+
+
+async def maybe_send_release_note_once():
+    global _RELEASE_NOTE_SENT_MEM
+    if _RELEASE_NOTE_SENT_MEM:
+        return
+    if is_postgres_enabled():
+        already = db_get_json("release_note_v2_0_sent")
+        if isinstance(already, dict) and already.get("sent"):
+            _RELEASE_NOTE_SENT_MEM = True
+            return
+    wa_status = await get_wa_status_internal()
+    if wa_status.get("status") == "connected":
+        try:
+            overview = await fetch_currencies_overview(force=True)
+            msg = format_update_release_note(overview)
+            await send_whatsapp_message(msg)
+            _RELEASE_NOTE_SENT_MEM = True
+            if is_postgres_enabled():
+                db_set_json(
+                    "release_note_v2_0_sent",
+                    {"sent": True, "ts": datetime.now().isoformat()},
+                )
+            print("[Release Note] Nota de atualização 2.0 enviada com sucesso no WhatsApp!")
+        except Exception as e:
+            print(f"[Release Note] Aviso ao enviar nota: {e}")
+
+
 async def background_monitor_loop():
-    await asyncio.sleep(3)
+    await asyncio.sleep(5)
     while True:
         try:
             await ensure_wa_bridge_started()
+            await maybe_send_release_note_once()
             await evaluate_and_maybe_alert(force_refresh=True)
         except Exception as e:
             print(f"[Monitor Loop] Erro na checagem: {e}")
@@ -418,6 +449,19 @@ class TestAlertRequest(BaseModel):
     currency: Optional[str] = "USD"
 
 
+@app.post("/api/whatsapp/send-update-note")
+async def api_wa_send_update_note(req: Optional[TestAlertRequest] = None):
+    await ensure_wa_bridge_started()
+    overview = await fetch_currencies_overview(force=True)
+    msg = format_update_release_note(overview)
+    phone = req.phone if req and req.phone else None
+    try:
+        res = await send_whatsapp_message(msg, phone=phone)
+        return {"ok": True, "target": res.get("target")}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/whatsapp/send-now")
 async def api_wa_send_now(req: TestAlertRequest):
     cur = normalize_currency(req.currency)
@@ -533,6 +577,11 @@ async def api_wa_command(payload: WhatsAppCommandPayload):
     if cmd in ("!moedas", "!moeda", "!cambio", "!câmbio"):
         overview = await fetch_currencies_overview(force=True)
         return {"reply": format_currencies_overview_report(overview)}
+
+    # 2e. !novidades / !atualizacao -> Nota de atualização 2.0
+    if cmd in ("!novidades", "!atualizacao", "!atualização", "!update", "!versao", "!versão"):
+        overview = await fetch_currencies_overview(force=True)
+        return {"reply": format_update_release_note(overview)}
 
     # 3. !score -> Sem argumento explica o Score e os 4 pilares; com número altera o gatilho
     if cmd in ("!score", "!nota", "!explicar"):
