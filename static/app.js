@@ -2,6 +2,13 @@ let priceChartInstance = null;
 let currentConfig = null;
 let configLoadedOnce = false;
 let activeCurrency = "USD";
+let fetchRequestSeq = 0;
+
+const simAmountsByCurrency = {
+  USD: 1000,
+  EUR: 1000,
+  ARS: 100000,
+};
 
 function fmtBRL(val, decimals = 4) {
   if (val === null || val === undefined || isNaN(val)) return "R$ --";
@@ -12,6 +19,14 @@ function fmtBRL(val, decimals = 4) {
       maximumFractionDigits: decimals,
     })
   );
+}
+
+function fmtNumBR(val, decimals = 4) {
+  if (val === null || val === undefined || isNaN(val)) return "--";
+  return Number(val).toLocaleString("pt-BR", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
 }
 
 function renderCurrenciesBar(currencies) {
@@ -37,26 +52,38 @@ function renderCurrenciesBar(currencies) {
   }
 
   if (ars) {
-    document.getElementById("barArsPrice").textContent = fmtBRL(ars.price, 4);
+    document.getElementById("barArsPrice").textContent = fmtBRL(ars.price, 5);
     const ch = document.getElementById("barArsChange");
     ch.textContent = `${ars.pct_change >= 0 ? "+" : ""}${Number(ars.pct_change).toFixed(2)}%`;
     ch.className = "cur-change " + (ars.pct_change <= 0 ? "change-down" : "change-up");
-    document.getElementById("barArsSub").textContent = `R$ 1 = ${Number(ars.units_per_1_brl).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} ARS`;
+    const arsPerBrl = Number(ars.units_per_1_brl || (ars.price > 0 ? 1 / ars.price : 0)).toLocaleString("pt-BR", {
+      maximumFractionDigits: 0,
+    });
+    const brlPer1k = fmtBRL((ars.price || 0) * 1000, 2);
+    document.getElementById("barArsSub").textContent = `R$ 1 = ${arsPerBrl} ARS • 1k = ${brlPer1k}`;
   }
 }
 
 async function fetchDashboardData(force = false) {
+  const reqSeq = ++fetchRequestSeq;
+  const reqCurrency = activeCurrency;
   const simInput = document.getElementById("simUsdInput");
-  const usdAmt = simInput ? parseFloat(simInput.value) || 1000 : 1000;
+  const defaultAmt = simAmountsByCurrency[reqCurrency] || (reqCurrency === "ARS" ? 100000 : 1000);
+  const usdAmt = simInput ? parseFloat(simInput.value) || defaultAmt : defaultAmt;
+  simAmountsByCurrency[reqCurrency] = usdAmt;
+
   const badge = document.getElementById("lastUpdateBadge");
   if (badge) badge.textContent = "Atualizando...";
 
   try {
     const resp = await fetch(
-      `/api/analysis?force=${force ? "true" : "false"}&usd_amount=${usdAmt}&currency=${activeCurrency}`
+      `/api/analysis?force=${force ? "true" : "false"}&usd_amount=${usdAmt}&currency=${reqCurrency}`
     );
     if (!resp.ok) throw new Error("Falha ao carregar análise");
     const data = await resp.json();
+    // Ignora resposta antiga se o usuário já trocou de aba
+    if (reqSeq !== fetchRequestSeq) return;
+
     if (data.currencies) {
       renderCurrenciesBar(data.currencies);
     }
@@ -82,8 +109,29 @@ function renderAnalysis(a) {
   const tm = a.timing;
   const sim = a.simulator;
   const curCode = a.currency || spot.currency || "USD";
-  const curSym = spot.symbol || "US$";
-  const dec = curCode === "ARS" ? 4 : 4;
+  const curSym = spot.symbol || (curCode === "EUR" ? "€" : curCode === "ARS" ? "ARS" : "US$");
+  const dec = curCode === "ARS" ? 5 : 4;
+  const fineDec = curCode === "ARS" ? 6 : 4;
+
+  // Atualiza rótulos dinâmicos da moeda ativa
+  const topLogo = document.getElementById("topLogoBadge");
+  if (topLogo) topLogo.textContent = curSym;
+
+  const simLabel = document.getElementById("simInputLabel");
+  if (simLabel) simLabel.textContent = `Valor ${curSym}:`;
+
+  const vetHeader = document.getElementById("vetRateHeader");
+  if (vetHeader) vetHeader.textContent = `VET (R$/${curSym})`;
+
+  const chartTitle = document.getElementById("chartCardTitle");
+  if (chartTitle) {
+    chartTitle.textContent = `HISTÓRICO DE 90 DIAS — ${(spot.name || curCode).toUpperCase()} + BANDAS DE BOLLINGER (20,2) + MÉDIAS MÓVEIS`;
+  }
+
+  const btnZap = document.getElementById("btnSendZapNow");
+  if (btnZap && !btnZap.disabled) {
+    btnZap.textContent = `📲 Enviar Raio-X (${curCode}) no Zap`;
+  }
 
   // 1. Spot Card
   const titleEl = document.getElementById("spotCardTitle");
@@ -168,9 +216,9 @@ function renderAnalysis(a) {
     : "#38bdf8";
 
   document.getElementById("timingAdvice").textContent = tm.advice;
-  document.getElementById("dcaPrice1").textContent = fmtBRL(tm.dca_tranche_1_price, 4);
-  document.getElementById("dcaPrice2").textContent = fmtBRL(tm.dca_tranche_2_price, 4);
-  document.getElementById("dcaSupport").textContent = fmtBRL(tm.support_30d, 4);
+  document.getElementById("dcaPrice1").textContent = fmtBRL(tm.dca_tranche_1_price, dec);
+  document.getElementById("dcaPrice2").textContent = fmtBRL(tm.dca_tranche_2_price, dec);
+  document.getElementById("dcaSupport").textContent = fmtBRL(tm.support_30d, dec);
 
   // 4. Raio-X Indicadores
   document.getElementById("indRsi").textContent = ind.rsi14.toFixed(1);
@@ -182,33 +230,38 @@ function renderAnalysis(a) {
       : "🟡 Zona Neutra (38 a 60)";
 
   document.getElementById("indBbPct").textContent = `${ind.bb_pct_b.toFixed(0)}% da banda`;
-  document.getElementById("indBbRange").textContent = `Inf: R$ ${ind.bb_lower.toFixed(4)} | Sup: R$ ${ind.bb_upper.toFixed(4)}`;
+  document.getElementById("indBbRange").textContent = `Inf: ${fmtBRL(ind.bb_lower, dec)} | Sup: ${fmtBRL(ind.bb_upper, dec)}`;
 
   document.getElementById("indCheap30").textContent = `Mais barato que ${st.cheaper_than_30d_pct.toFixed(0)}%`;
   document.getElementById("indCheap90").textContent = `Mais barato que ${st.cheaper_than_90d_pct.toFixed(0)}%`;
 
   document.getElementById("indZscore").textContent = `${st.zscore30 >= 0 ? "+" : ""}${st.zscore30.toFixed(2)}σ / ${st.zscore90 >= 0 ? "+" : ""}${st.zscore90.toFixed(2)}σ`;
   document.getElementById("indSmaDiff").textContent = `${ind.diff_sma20_pct >= 0 ? "+" : ""}${ind.diff_sma20_pct.toFixed(2)}% (20d)`;
-  document.getElementById("indSmaVals").textContent = `SMA20: R$ ${ind.sma20.toFixed(4)} | SMA50: R$ ${ind.sma50.toFixed(4)}`;
+  document.getElementById("indSmaVals").textContent = `SMA20: ${fmtBRL(ind.sma20, dec)} | SMA50: ${fmtBRL(ind.sma50, dec)}`;
 
-  document.getElementById("indMacd").textContent = ind.macd_hist.toFixed(4);
+  document.getElementById("indMacd").textContent = fmtNumBR(ind.macd_hist, fineDec);
   document.getElementById("indMacdSlope").textContent =
     ind.macd_hist_slope >= 0
       ? "Queda perdendo força / Subindo"
       : "Pressão de venda acelerando";
 
-  document.getElementById("indAtr").textContent = `R$ ${ind.atr14.toFixed(4)} (${ind.atr_pct.toFixed(2)}%)`;
+  document.getElementById("indAtr").textContent = `${fmtBRL(ind.atr14, fineDec)} (${ind.atr_pct.toFixed(2)}%)`;
 
   // 5. Tabela Simulador VET
   const tbody = document.getElementById("vetTableBody");
   tbody.innerHTML = "";
+  const unitsDec = curCode === "ARS" ? 0 : 2;
   sim.options.forEach((opt) => {
     const tr = document.createElement("tr");
     if (opt.recommended) tr.className = "recommended-row";
-    const taxStr = opt.tax_per_usd ? `+${fmtBRL(opt.tax_per_usd, 4)}/${curSym}` : "";
+    const taxStr = opt.tax_per_usd ? `+${fmtBRL(opt.tax_per_usd, fineDec)}/${curSym}` : "";
     const per1000Str = opt.usd_per_1000_brl
-      ? `<div style="font-size:0.74rem;color:#34d399">R$ 1.000 = <strong>${curSym} ${opt.usd_per_1000_brl.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>`
+      ? `<div style="font-size:0.74rem;color:#34d399">R$ 1.000 = <strong>${curSym} ${opt.usd_per_1000_brl.toLocaleString("pt-BR", { minimumFractionDigits: unitsDec, maximumFractionDigits: unitsDec })}</strong></div>`
       : "";
+    const vetSubStr =
+      curCode === "ARS"
+        ? `<div style="font-size:0.72rem;color:#94a3b8">1.000 ARS = ${fmtBRL(opt.vet_rate * 1000, 2)}</div>`
+        : "";
     tr.innerHTML = `
       <td>
         <strong>${opt.name}</strong>
@@ -218,7 +271,10 @@ function renderAnalysis(a) {
         <div>${opt.spread_pct.toFixed(2)}% + ${opt.iof_pct.toFixed(2)}% IOF</div>
         <small style="color:#94a3b8">${taxStr}</small>
       </td>
-      <td><strong>${fmtBRL(opt.vet_rate, 4)}</strong></td>
+      <td>
+        <strong>${fmtBRL(opt.vet_rate, dec)}</strong>
+        ${vetSubStr}
+      </td>
       <td><strong>${fmtBRL(opt.total_brl, 2)}</strong></td>
     `;
     tbody.appendChild(tr);
@@ -236,12 +292,12 @@ function renderAnalysis(a) {
   } else {
     callout.style.borderLeftColor = "#f59e0b";
     callout.innerHTML = `
-      ⏳ <strong>Atenção ao preço:</strong> Hoje ${curSym} ${sim.usd_amount.toLocaleString("pt-BR")} sai <strong>${fmtBRL(Math.abs(savMean), 2)} mais caro</strong> que a média dos últimos 30 dias. Ainda assim, usar Conta Global economiza <strong>${fmtBRL(savCard, 2)}</strong> vs Cartão de Crédito.
+      ⏳ <strong>Atenção ao preço:</strong> Hoje <strong>${curSym} ${sim.usd_amount.toLocaleString("pt-BR")}</strong> sai <strong>${fmtBRL(Math.abs(savMean), 2)} mais caro</strong> que a média dos últimos 30 dias. Ainda assim, usar Conta Global economiza <strong>${fmtBRL(savCard, 2)}</strong> vs Cartão de Crédito.
     `;
   }
 
   // 6. Chart
-  renderChart(a.chart || []);
+  renderChart(a.chart || [], spot, dec);
 }
 
 function setPillar(prefix, score, max) {
@@ -250,20 +306,24 @@ function setPillar(prefix, score, max) {
   document.getElementById(`${prefix}Bar`).style.width = `${pct}%`;
 }
 
-function renderChart(chartData) {
+function renderChart(chartData, spot = {}, dec = 4) {
   const ctx = document.getElementById("priceChart").getContext("2d");
   const labels = chartData.map((d) => d.date.slice(5)); // MM-DD
   const closeVals = chartData.map((d) => d.close);
   const sma20Vals = chartData.map((d) => d.sma20);
   const bbUpperVals = chartData.map((d) => d.bb_upper);
   const bbLowerVals = chartData.map((d) => d.bb_lower);
+  const mainLabel = `${spot?.name || "Dólar Comercial"} (R$)`;
 
   if (priceChartInstance) {
     priceChartInstance.data.labels = labels;
+    priceChartInstance.data.datasets[0].label = mainLabel;
     priceChartInstance.data.datasets[0].data = closeVals;
     priceChartInstance.data.datasets[1].data = sma20Vals;
     priceChartInstance.data.datasets[2].data = bbUpperVals;
     priceChartInstance.data.datasets[3].data = bbLowerVals;
+    priceChartInstance.options.scales.y.ticks.callback = (val) =>
+      "R$ " + Number(val).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
     priceChartInstance.update();
     return;
   }
@@ -274,7 +334,7 @@ function renderChart(chartData) {
       labels,
       datasets: [
         {
-          label: "Dólar Comercial (R$)",
+          label: mainLabel,
           data: closeVals,
           borderColor: "#38bdf8",
           backgroundColor: "rgba(56, 189, 248, 0.1)",
@@ -318,7 +378,14 @@ function renderChart(chartData) {
       },
       scales: {
         x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.04)" } },
-        y: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.06)" } },
+        y: {
+          ticks: {
+            color: "#94a3b8",
+            callback: (val) =>
+              "R$ " + Number(val).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec }),
+          },
+          grid: { color: "rgba(255,255,255,0.06)" },
+        },
       },
     },
   });
@@ -337,11 +404,16 @@ function maskPhoneDisplay(raw) {
 
 function populateConfigForm(cfg) {
   currentConfig = cfg;
+  const baseSim = cfg.simulation_amount_usd && cfg.simulation_amount_usd < 50000 ? cfg.simulation_amount_usd : 1000;
+  simAmountsByCurrency.USD = baseSim;
+  simAmountsByCurrency.EUR = baseSim;
   document.getElementById("cfgPhone").value = cfg.target_phone || "bot dolar";
   document.getElementById("cfgMinScore").value = cfg.min_score_alert ?? 72;
   document.getElementById("cfgTargetPrice").value = cfg.target_price_brl ?? "";
-  document.getElementById("cfgSimUsd").value = cfg.simulation_amount_usd ?? 1000;
-  document.getElementById("simUsdInput").value = cfg.simulation_amount_usd ?? 1000;
+  document.getElementById("cfgSimUsd").value = baseSim;
+  if (activeCurrency !== "ARS") {
+    document.getElementById("simUsdInput").value = baseSim;
+  }
   document.getElementById("cfgInterval").value = cfg.check_interval_minutes ?? 5;
   document.getElementById("cfgCooldown").value = cfg.cooldown_hours ?? 4;
   document.getElementById("cfgAutoEnabled").checked = Boolean(cfg.auto_alert_enabled);
@@ -357,17 +429,18 @@ function renderHistory(items) {
     return;
   }
   box.innerHTML = items
-    .map(
-      (it) => `
+    .map((it) => {
+      const isArs = String(it.type || "").includes("ARS") || Number(it.price) < 0.05;
+      return `
     <div class="history-item">
       <div>
-        <strong>${fmtBRL(it.price, 4)}</strong> — Score <strong>${it.score}/100</strong> (${it.verdict})
+        <strong>${fmtBRL(it.price, isArs ? 5 : 4)}</strong> — Score <strong>${it.score}/100</strong> (${it.verdict})
         <div style="font-size:0.74rem;color:#94a3b8">${it.timestamp} • Destino: ${maskPhoneDisplay(it.target)}</div>
       </div>
       <span class="source-tag">${it.type}</span>
     </div>
-  `
-    )
+  `;
+    })
     .join("");
 }
 
@@ -483,16 +556,17 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".currency-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       const cur = tab.getAttribute("data-currency") || "USD";
+      const simInput = document.getElementById("simUsdInput");
+      if (simInput && activeCurrency) {
+        const curVal = parseFloat(simInput.value);
+        if (curVal > 0) simAmountsByCurrency[activeCurrency] = curVal;
+      }
       activeCurrency = cur;
       document.querySelectorAll(".currency-tab").forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
-      const simInput = document.getElementById("simUsdInput");
       if (simInput) {
-        if (cur === "ARS" && parseFloat(simInput.value) <= 2000) {
-          simInput.value = 100000;
-        } else if (cur !== "ARS" && parseFloat(simInput.value) >= 50000) {
-          simInput.value = 1000;
-        }
+        simInput.step = cur === "ARS" ? "10000" : "100";
+        simInput.value = simAmountsByCurrency[cur] || (cur === "ARS" ? 100000 : 1000);
       }
       fetchDashboardData(false);
     });

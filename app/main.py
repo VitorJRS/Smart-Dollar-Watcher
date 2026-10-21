@@ -352,7 +352,10 @@ async def get_wa_status_internal() -> Dict[str, Any]:
 
 @app.get("/")
 async def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    return FileResponse(
+        str(STATIC_DIR / "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/health")
@@ -380,12 +383,15 @@ async def api_get_analysis(
     currency: str = "USD",
 ):
     cur = normalize_currency(currency)
-    cfg = load_config()
+    saved_cfg = load_config()
+    sim_cfg = saved_cfg.model_copy(deep=True)
     if usd_amount is not None and usd_amount > 0:
-        cfg.simulation_amount_usd = usd_amount
+        sim_cfg.simulation_amount_usd = usd_amount
+    elif cur == "ARS":
+        sim_cfg.simulation_amount_usd = 100000.0
     df = await fetch_historical_ohlc(days=180, force=force, currency=cur)
     spot = await fetch_spot_quote(force=force, currency=cur)
-    analysis = analyze_dollar(df, spot, cfg)
+    analysis = analyze_dollar(df, spot, sim_cfg)
     currencies = await fetch_currencies_overview(force=force)
     if cur == "USD":
         _ALERT_STATE["last_analysis"] = analysis
@@ -394,7 +400,7 @@ async def api_get_analysis(
         "currency": cur,
         "analysis": analysis,
         "currencies": currencies,
-        "config": cfg.model_dump(),
+        "config": saved_cfg.model_dump(),
         "history": load_alerts_history()[:15],
         "database": "PostgreSQL (Render)" if is_postgres_enabled() else "Local JSON",
         "last_check_ts": _ALERT_STATE["last_check_ts"],

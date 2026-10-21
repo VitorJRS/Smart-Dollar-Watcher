@@ -36,9 +36,15 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
     close = df["close"]
     price = float(spot["price"])
     currency = str(spot.get("currency", "USD")).upper()
-    decimals = 6 if currency == "ARS" else 4
-    cur_symbol = spot.get("symbol", "US$")
-    cur_name = spot.get("short_name", "Dólar")
+    decimals = 5 if currency == "ARS" else 4
+    default_symbols = {"USD": "US$", "EUR": "€", "ARS": "ARS"}
+    default_names = {"USD": "Dólar", "EUR": "Euro", "ARS": "Peso Argentino"}
+    cur_symbol = spot.get("symbol") or default_symbols.get(currency, "US$")
+    cur_name = spot.get("short_name") or default_names.get(currency, "Dólar")
+
+    def _fmt_brl(val: float, dec: int = decimals) -> str:
+        s = f"{val:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {s}"
 
     # --- 1. INDICADORES TÉCNICOS ---
     df["ema9"] = close.ewm(span=9, adjust=False).mean()
@@ -144,7 +150,7 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
         momentum_pts = 10.0
         knife_status = "ESTABILIZANDO / FUNDO PROVÁVEL"
         knife_advice = (
-            "A pressão vendedora está perdendo força em região descontada. "
+            f"A pressão vendedora no {cur_name} está perdendo força em região descontada. "
             "Excelente momento para entrar com a maior parte do capital (70% a 100%)."
         )
     elif is_falling_knife:
@@ -153,20 +159,20 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
         knife_advice = (
             f"O {cur_name} está barato, mas ainda cai com força (momentum negativo acelerando). "
             "Para não comprar cedo demais caso caia mais, faça compra fracionada (DCA): "
-            f"compre 50% agora (R$ {price:.{decimals}f}) e deixe 50% para buscar R$ {(price - 0.75 * atr):.{decimals}f}."
+            f"compre 50% agora ({_fmt_brl(price)}) e deixe 50% para buscar {_fmt_brl(price - 0.75 * atr)}."
         )
     elif price < sma20:
         momentum_pts = 8.0
         knife_status = "TENDÊNCIA DE BAIXA MODERADA (FAVORÁVEL)"
         knife_advice = (
-            "Cotação abaixo da média de 20 dias sem pânico extremo. "
-            f"Sugestão: compre 60% agora e 40% se recuar até R$ {(price - 0.5 * atr):.{decimals}f}."
+            f"Cotação do {cur_name} abaixo da média de 20 dias sem pânico extremo. "
+            f"Sugestão: compre 60% agora e 40% se recuar até {_fmt_brl(price - 0.5 * atr)}."
         )
     else:
         momentum_pts = float(np.clip(5.0 - diff_sma20_pct * 2.0, 0.0, 6.0))
         knife_status = "ACIMA DA MÉDIA CURTA (AGUARDAR RECUO)"
         knife_advice = (
-            f"O {cur_name} está operando acima da média de 20 dias (R$ {sma20:.{decimals}f}). "
+            f"O {cur_name} está operando acima da média de 20 dias ({_fmt_brl(sma20)}). "
             "Só compre agora se tiver urgência imediata de viagem."
         )
 
@@ -261,24 +267,27 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
         reasons_con.append(f"RSI(14) em {rsi:.1f} próximo de sobrecompra (evitar comprar no topo)")
 
     if bb_pct_b <= 0.20:
-        reasons_pro.append(f"Preço encostando na Banda Inferior de Bollinger (R$ {bb_lower:.{decimals}f})")
+        reasons_pro.append(f"Preço encostando na Banda Inferior de Bollinger ({_fmt_brl(bb_lower)})")
     elif bb_pct_b >= 0.80:
-        reasons_con.append(f"Preço próximo da Banda Superior de Bollinger (R$ {bb_upper:.{decimals}f})")
+        reasons_con.append(f"Preço próximo da Banda Superior de Bollinger ({_fmt_brl(bb_upper)})")
 
     if diff_sma20_pct < -0.3:
-        reasons_pro.append(f"Abaixo da Média de 20 dias em {abs(diff_sma20_pct):.2f}% (média: R$ {sma20:.{decimals}f})")
+        reasons_pro.append(f"Abaixo da Média de 20 dias em {abs(diff_sma20_pct):.2f}% (média: {_fmt_brl(sma20)})")
     else:
-        reasons_con.append(f"Acima da Média de 20 dias em {diff_sma20_pct:+.2f}% (média: R$ {sma20:.{decimals}f})")
+        reasons_con.append(f"Acima da Média de 20 dias em {diff_sma20_pct:+.2f}% (média: {_fmt_brl(sma20)})")
 
     if savings_vs_mean30_brl > 0:
+        amt_str = f"{usd_amount:,.0f}".replace(",", ".")
         reasons_pro.append(
-            f"Economia imediata de R$ {savings_vs_mean30_brl:.2f} a cada {cur_symbol} {usd_amount:,.0f} vs média do mês"
+            f"Economia imediata de {_fmt_brl(savings_vs_mean30_brl, 2)} a cada {cur_symbol} {amt_str} vs média do mês"
         )
 
     if target_hit:
         reasons_pro.append(
-            f"Atingiu sua meta manual de preço (<= R$ {cfg.target_price_brl:.4f})!"
+            f"Atingiu sua meta manual de preço (<= {_fmt_brl(cfg.target_price_brl, 4)})!"
         )
+
+    fine_decimals = 6 if currency == "ARS" else 4
 
     # Série histórica para o gráfico no Dashboard (últimos 90 dias)
     chart_df = df.tail(90)
@@ -330,11 +339,11 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
             "diff_sma20_pct": round(diff_sma20_pct, 2),
             "diff_sma50_pct": round(diff_sma50_pct, 2),
             "diff_sma90_pct": round(diff_sma90_pct, 2),
-            "macd": round(macd_val, decimals),
-            "macd_signal": round(macd_sig, decimals),
-            "macd_hist": round(macd_hist, decimals),
-            "macd_hist_slope": round(macd_hist_slope, decimals),
-            "atr14": round(atr, decimals),
+            "macd": round(macd_val, fine_decimals),
+            "macd_signal": round(macd_sig, fine_decimals),
+            "macd_hist": round(macd_hist, fine_decimals),
+            "macd_hist_slope": round(macd_hist_slope, fine_decimals),
+            "atr14": round(atr, fine_decimals),
             "atr_pct": round(atr_pct, 2),
         },
         "statistics": {
@@ -373,7 +382,7 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
                     "name": "Conta Global App (Taxa 2,0% + Encargos 3,5%)",
                     "spread_pct": sp.global_account_spread_pct,
                     "iof_pct": sp.global_account_iof_pct,
-                    "tax_per_usd": round(vet_global - price, decimals),
+                    "tax_per_usd": round(vet_global - price, fine_decimals),
                     "vet_rate": round(vet_global, decimals),
                     "total_brl": total_brl_global,
                     "usd_per_1000_brl": round(1000.0 / vet_global, 2),
@@ -384,7 +393,7 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
                     "name": "Wise Oficial via PIX (API Tempo Real)",
                     "spread_pct": wise_spread,
                     "iof_pct": wise_iof,
-                    "tax_per_usd": round(vet_wise - price, decimals),
+                    "tax_per_usd": round(vet_wise - price, fine_decimals),
                     "vet_rate": round(vet_wise, decimals),
                     "total_brl": round(vet_wise * usd_amount, 2),
                     "usd_per_1000_brl": round(1000.0 / vet_wise, 2),
@@ -395,7 +404,7 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
                     "name": "Conta Global (Investimento - IOF 0,38%)",
                     "spread_pct": inv_spread,
                     "iof_pct": sp.investment_iof_pct,
-                    "tax_per_usd": round(vet_invest - price, decimals),
+                    "tax_per_usd": round(vet_invest - price, fine_decimals),
                     "vet_rate": round(vet_invest, decimals),
                     "total_brl": round(vet_invest * usd_amount, 2),
                     "usd_per_1000_brl": round(1000.0 / vet_invest, 2),
@@ -406,7 +415,7 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
                     "name": "Espécie (Casa de Câmbio)",
                     "spread_pct": sp.cash_spread_pct,
                     "iof_pct": sp.cash_iof_pct,
-                    "tax_per_usd": round(vet_cash - price, decimals),
+                    "tax_per_usd": round(vet_cash - price, fine_decimals),
                     "vet_rate": round(vet_cash, decimals),
                     "total_brl": round(vet_cash * usd_amount, 2),
                     "usd_per_1000_brl": round(1000.0 / vet_cash, 2),
@@ -417,7 +426,7 @@ def analyze_dollar(df: pd.DataFrame, spot: Dict[str, Any], cfg: AppConfig) -> Di
                     "name": "Cartão de Crédito Tradicional",
                     "spread_pct": sp.credit_card_spread_pct,
                     "iof_pct": sp.credit_card_iof_pct,
-                    "tax_per_usd": round(vet_card - price, decimals),
+                    "tax_per_usd": round(vet_card - price, fine_decimals),
                     "vet_rate": round(vet_card, decimals),
                     "total_brl": round(vet_card * usd_amount, 2),
                     "usd_per_1000_brl": round(1000.0 / vet_card, 2),

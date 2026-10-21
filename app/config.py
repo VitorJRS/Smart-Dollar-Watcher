@@ -60,6 +60,9 @@ def _normalize_config_dict(data: Dict[str, Any]) -> tuple[AppConfig, bool]:
     if "only_on_drop" not in data:
         data["only_on_drop"] = True
         changed = True
+    if float(data.get("simulation_amount_usd") or 1000.0) >= 50000.0:
+        data["simulation_amount_usd"] = 1000.0
+        changed = True
     return AppConfig(**data), changed
 
 
@@ -68,7 +71,7 @@ def load_config(force_db: bool = False) -> AppConfig:
     ensure_data_dir()
 
     if _CONFIG_MEM_CACHE is not None and not force_db:
-        return _CONFIG_MEM_CACHE
+        return _CONFIG_MEM_CACHE.model_copy(deep=True)
 
     # 1. Tenta carregar do banco PostgreSQL (Render) se configurado
     if is_postgres_enabled():
