@@ -530,16 +530,32 @@ def parse_smart_number(raw: str) -> float:
 class WhatsAppCommandPayload(BaseModel):
     command: str
     sender: str
+    group_name: Optional[str] = None
 
 
 @app.post("/api/whatsapp/command")
 async def api_wa_command(payload: WhatsAppCommandPayload):
+    # REGRA RESTRITA: Comandos só são aceitos quando enviados exclusivamente no grupo "bot de dolar"
+    if not payload.sender.endswith("@g.us"):
+        return {"reply": None}
+
+    if payload.group_name:
+        import unicodedata
+        norm = unicodedata.normalize("NFD", payload.group_name.lower())
+        clean = "".join(c for c in norm if c.isalnum())
+        if clean not in ("botdedolar", "botdolar", "botdodolar"):
+            return {"reply": None}
+
     text_raw = payload.command.strip()
     parts = text_raw.split()
     if not parts:
         return {"reply": None}
 
     cmd = parts[0].lower()
+    # Se for apenas '!' ou '!!!' sem comando real, ignora
+    if not cmd.lstrip("!"):
+        return {"reply": None}
+
     rest_str = " ".join(parts[1:]).strip()
 
     cfg = load_config()

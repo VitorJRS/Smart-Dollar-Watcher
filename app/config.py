@@ -26,11 +26,11 @@ class SpreadConfig(BaseModel):
     credit_card_iof_pct: float = 3.50         # IOF cartão vigente (3,5%)
 
 
-FIXED_DEFAULT_TARGET = "bot dolar"
+FIXED_DEFAULT_TARGET = "bot de dolar"
 
 
 class AppConfig(BaseModel):
-    target_phone: str = FIXED_DEFAULT_TARGET  # Destino fixo padrão: grupo "bot dolar"
+    target_phone: str = FIXED_DEFAULT_TARGET  # Destino fixo padrão: grupo "bot de dolar"
     min_score_alert: int = 72                 # Score mínimo (0 a 100) para disparar alerta automático
     target_price_brl: Optional[float] = None  # Alerta opcional por preço-alvo direto (ex: 5.00)
     simulation_amount_usd: float = 1000.0     # Valor base para simular
@@ -53,8 +53,8 @@ def _normalize_config_dict(data: Dict[str, Any]) -> tuple[AppConfig, bool]:
         data["spreads"] = SpreadConfig().model_dump()
         changed = True
     raw_phone = str(data.get("target_phone") or "").strip()
-    # Se estiver vazio ou apontando para o número pessoal antigo, fixa no grupo "bot dolar"
-    if not raw_phone or raw_phone in ("5519999831973", "19999831973", "bot de dolar"):
+    # Se estiver vazio ou apontando para destino antigo, fixa no grupo "bot de dolar"
+    if not raw_phone or raw_phone in ("5519999831973", "19999831973", "bot dolar"):
         data["target_phone"] = FIXED_DEFAULT_TARGET
         changed = True
     if "only_on_drop" not in data:

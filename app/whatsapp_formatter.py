@@ -428,7 +428,7 @@ def format_config_status(cfg: AppConfig, analysis: Dict[str, Any]) -> str:
         "━━━━━━━━━━━━━━━━━━━━",
         f"• *Monitoramento Automático:* *{status_str}*",
         f"• *Filtro Só em Queda:* *{drop_str}*",
-        f"• *Grupo / Destino dos Alertas:* `{cfg.target_phone or 'bot dolar'}`",
+        f"• *Grupo / Destino dos Alertas:* `{cfg.target_phone or 'bot de dolar'}`",
         f"• *Score Mínimo p/ Alerta:* *{cfg.min_score_alert}/100*",
         f"• *Meta Fixa de Preço:* *{meta_str}*",
         f"• *Valor Base de Simulação:* *US$ {fmt_num(cfg.simulation_amount_usd, 0)}*",

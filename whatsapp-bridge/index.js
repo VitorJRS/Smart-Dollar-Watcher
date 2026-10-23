@@ -80,11 +80,19 @@ async function fetchAllGroups() {
   }
 }
 
-const FIXED_DEFAULT_TARGET = "bot dolar";
+const FIXED_DEFAULT_TARGET = "bot de dolar";
+
+function isBotDeDolarGroup(subject) {
+  if (!subject) return false;
+  const norm = normalizeText(subject);
+  if (norm === "bot de dolar" || norm === "bot dolar") return true;
+  const clean = norm.replace(/[^a-z0-9]/g, "");
+  return clean === "botdedolar" || clean === "botdolar" || clean === "botdodolar";
+}
 
 async function resolveTargetJid(targetInput) {
   let raw = (targetInput || "").trim();
-  if (!raw) {
+  if (!raw || isBotDeDolarGroup(raw)) {
     raw = FIXED_DEFAULT_TARGET;
   }
 
@@ -93,19 +101,28 @@ async function resolveTargetJid(targetInput) {
     return raw;
   }
 
-  // 2. Se tiver letras (ex: "bot dolar", "bot de dolar"), procura nos grupos pelo nome!
+  // 2. Se tiver letras (ex: "bot de dolar", "bot dolar"), procura nos grupos pelo nome!
   const hasLetters = /[a-zA-ZÀ-ÿ]/.test(raw);
   if (hasLetters) {
-    const searchName = normalizeText(raw);
     const groups = await fetchAllGroups();
 
-    // 1. Busca exata (ignorando acentos e maiúsculas)
+    // 1. Prioriza correspondência com o grupo oficial "bot de dolar"
+    if (isBotDeDolarGroup(raw)) {
+      const matchedOfficial = groups.find((g) => isBotDeDolarGroup(g.name));
+      if (matchedOfficial) {
+        return matchedOfficial.id;
+      }
+    }
+
+    const searchName = normalizeText(raw);
+
+    // 2. Busca exata (ignorando acentos e maiúsculas)
     let matched = groups.find((g) => normalizeText(g.name) === searchName);
-    // 2. Busca parcial (contém o nome)
+    // 3. Busca parcial (contém o nome)
     if (!matched) {
       matched = groups.find((g) => normalizeText(g.name).includes(searchName));
     }
-    // 3. Busca flexível ignorando conectivos ("de", "do", "da", "grupo")
+    // 4. Busca flexível ignorando conectivos ("de", "do", "da", "grupo")
     if (!matched) {
       const cleanSearch = searchName
         .replace(/\b(de|do|da|grupo)\b/g, "")
@@ -126,7 +143,7 @@ async function resolveTargetJid(targetInput) {
 
     const availableNames = groups.map((g) => `"${g.name}"`).join(", ");
     throw new Error(
-      `Grupo "${raw}" não encontrado! Grupos detectados: ${availableNames || "nenhum grupo encontrado"}.`
+      `Grupo "${raw}" não encontrado! Grupos detectados: ${availableNames || "nenhum grupo encontrado"}. Crie um grupo no WhatsApp chamado "bot de dolar".`
     );
   }
 
@@ -335,6 +352,15 @@ async function startWhatsApp() {
       }
     });
 
+    sock.ev.on("groups.update", async (updates) => {
+      for (const update of updates) {
+        if (update && update.id) {
+          const cached = groupMetadataCache.get(update.id) || {};
+          groupMetadataCache.set(update.id, { ...cached, ...update });
+        }
+      }
+    });
+
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify" && type !== "append") return;
 
@@ -352,10 +378,42 @@ async function startWhatsApp() {
 
         const text = extractMessageText(msg.message);
         const trimmed = text.trim();
-        if (!trimmed.startsWith("!")) continue;
+        // Ignora se não começar com '!' seguido de letra ou dígito (ex: ignora '!', '!!', '!!!')
+        if (!/^![a-zA-Z0-9À-ÿ]/.test(trimmed)) continue;
 
         const remoteJid = msg.key.remoteJid;
         if (!remoteJid || remoteJid === "status@broadcast") continue;
+
+        // REGRA DE SEGURANÇA E MONITORAMENTO EXCLUSIVO:
+        // O bot só atende se a mensagem for enviada no grupo "bot de dolar".
+        // Mensagens diretas (PV/chat privado) ou em qualquer outro grupo são completamente ignoradas!
+        if (!remoteJid.endsWith("@g.us")) {
+          console.log(
+            `[WhatsApp Ignorado] Comando "${trimmed}" ignorado pois veio de chat privado (${remoteJid}). O bot só atende no grupo "bot de dolar".`
+          );
+          continue;
+        }
+
+        // Obtém metadados do grupo para validar o nome
+        let groupMeta = groupMetadataCache.get(remoteJid);
+        if (!groupMeta && sock) {
+          try {
+            groupMeta = await sock.groupMetadata(remoteJid);
+            if (groupMeta) {
+              groupMetadataCache.set(remoteJid, groupMeta);
+            }
+          } catch (metaErr) {
+            console.error(`[WhatsApp] Não foi possível obter metadados do grupo ${remoteJid}:`, metaErr.message);
+          }
+        }
+
+        const groupSubject = groupMeta?.subject || "";
+        if (!isBotDeDolarGroup(groupSubject)) {
+          console.log(
+            `[WhatsApp Ignorado] Comando "${trimmed}" ignorado no grupo "${groupSubject || remoteJid}". O bot opera EXCLUSIVAMENTE no grupo "bot de dolar".`
+          );
+          continue;
+        }
 
         if (msgId) {
           processedMsgIds.add(msgId);
@@ -365,7 +423,7 @@ async function startWhatsApp() {
           }
         }
 
-        console.log(`[WhatsApp Comando Recebido] "${trimmed}" de ${remoteJid}`);
+        console.log(`[WhatsApp Comando Aceito] "${trimmed}" no grupo "${groupSubject}" (${remoteJid})`);
         try {
           const resp = await fetch(`${PYTHON_API_URL}/api/whatsapp/command`, {
             method: "POST",
@@ -373,14 +431,14 @@ async function startWhatsApp() {
             body: JSON.stringify({
               command: trimmed,
               sender: remoteJid,
+              group_name: groupSubject,
             }),
           });
           if (resp.ok) {
             const data = await resp.json();
             if (data.reply) {
-              const targetJid = await resolveReplyJid(remoteJid, Boolean(msg.key.fromMe));
-              await sendSafeMessage(targetJid, data.reply);
-              console.log(`[WhatsApp Resposta Enviada] -> ${targetJid}`);
+              await sendSafeMessage(remoteJid, data.reply);
+              console.log(`[WhatsApp Resposta Enviada] -> ${groupSubject} (${remoteJid})`);
             }
           }
         } catch (err) {

@@ -407,7 +407,7 @@ function populateConfigForm(cfg) {
   const baseSim = cfg.simulation_amount_usd && cfg.simulation_amount_usd < 50000 ? cfg.simulation_amount_usd : 1000;
   simAmountsByCurrency.USD = baseSim;
   simAmountsByCurrency.EUR = baseSim;
-  document.getElementById("cfgPhone").value = cfg.target_phone || "bot dolar";
+  document.getElementById("cfgPhone").value = cfg.target_phone || "bot de dolar";
   document.getElementById("cfgMinScore").value = cfg.min_score_alert ?? 72;
   document.getElementById("cfgTargetPrice").value = cfg.target_price_brl ?? "";
   document.getElementById("cfgSimUsd").value = baseSim;

@@ -47,9 +47,11 @@ Depois, acesse o **Painel Web**:
 
 ---
 
-## 💬 Comandos Interativos no WhatsApp
+## 💬 Comandos Interativos no WhatsApp (Exclusivo no Grupo "bot de dolar")
 
-Você pode mandar mensagens no próprio WhatsApp (inclusive na conversa com você mesmo) usando:
+O robô monitora **exclusivamente o grupo chamado `bot de dolar`**. Comandos enviados no privado (PV) ou em outros grupos são **completamente ignorados**.
+
+Crie um grupo no WhatsApp com o nome **bot de dolar** e adicione o número conectado ao bot. No grupo, você pode usar:
 
 - `!dolar` ou `!agora` — Recebe o Raio-X completo da cotação e Score na hora
 - `!simular 2000` — Simula a compra de US$ 2.000 com taxas reais (Wise/Nomad/Espécie/Cartão)
